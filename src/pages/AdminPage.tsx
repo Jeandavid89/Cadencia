@@ -258,52 +258,6 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* Jours fériés */}
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
-              <SectionTitle>Jours fériés {CURRENT_YEAR}</SectionTitle>
-              <span className="text-xs text-slate-400 font-medium">{holidays.length} jours</span>
-            </div>
-            <div className="px-6 py-5">
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-5">
-                {holidays.map(h => (
-                  <div key={h.id ?? h.date} className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-xl px-3 py-2.5 group">
-                    <div>
-                      <div className="text-xs font-semibold text-slate-700">
-                        {new Date(h.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
-                      </div>
-                      <div className="text-[11px] text-slate-400">{h.name}</div>
-                    </div>
-                    {h.id && (
-                      <button onClick={() => removeHoliday(h.id!)}
-                        className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-400 text-lg leading-none ml-2 transition-all">×</button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <div className="flex gap-2 items-end pt-4 border-t border-slate-100">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Date</label>
-                  <input type="date" value={newHoliday.date}
-                    onChange={e => setNewHoliday(p => ({ ...p, date: e.target.value }))}
-                    className="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 bg-white" />
-                </div>
-                <div className="flex flex-col gap-1.5 flex-1">
-                  <label className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Nom</label>
-                  <input type="text" value={newHoliday.name}
-                    onChange={e => setNewHoliday(p => ({ ...p, name: e.target.value }))}
-                    onKeyDown={e => e.key === 'Enter' && addHoliday()}
-                    placeholder="Ex : Pont du 8 mai"
-                    className="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 bg-white" />
-                </div>
-                <button onClick={addHoliday} disabled={!newHoliday.date || !newHoliday.name}
-                  className="px-4 py-2 text-sm font-medium bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shadow-sm">
-                  + Ajouter
-                </button>
-              </div>
-            </div>
-          </div>
-
           {/* Employés */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
@@ -473,6 +427,52 @@ export default function AdminPage() {
               })()}
             </div>
           </div>
+          {/* Jours fériés */}
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
+              <SectionTitle>Jours fériés {CURRENT_YEAR}</SectionTitle>
+              <span className="text-xs text-slate-400 font-medium">{holidays.length} jours</span>
+            </div>
+            <div className="px-6 py-5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-5">
+                {holidays.map(h => (
+                  <div key={h.id ?? h.date} className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-xl px-3 py-2.5 group">
+                    <div>
+                      <div className="text-xs font-semibold text-slate-700">
+                        {new Date(h.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+                      </div>
+                      <div className="text-[11px] text-slate-400">{h.name}</div>
+                    </div>
+                    {h.id && (
+                      <button onClick={() => removeHoliday(h.id!)}
+                        className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-400 text-lg leading-none ml-2 transition-all">×</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 items-end pt-4 border-t border-slate-100">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Date</label>
+                  <input type="date" value={newHoliday.date}
+                    onChange={e => setNewHoliday(p => ({ ...p, date: e.target.value }))}
+                    className="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 bg-white" />
+                </div>
+                <div className="flex flex-col gap-1.5 flex-1">
+                  <label className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Nom</label>
+                  <input type="text" value={newHoliday.name}
+                    onChange={e => setNewHoliday(p => ({ ...p, name: e.target.value }))}
+                    onKeyDown={e => e.key === 'Enter' && addHoliday()}
+                    placeholder="Ex : Pont du 8 mai"
+                    className="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 bg-white" />
+                </div>
+                <button onClick={addHoliday} disabled={!newHoliday.date || !newHoliday.name}
+                  className="px-4 py-2 text-sm font-medium bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shadow-sm">
+                  + Ajouter
+                </button>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
