@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import { getWeekType, defaultRefMonday, toDateStr, getMondayOf } from '../lib/weekUtils'
+import { computeSoldeLive } from '../lib/bilanUtils'
 
 interface Employee {
   id: string; first_name: string; last_name: string
@@ -35,6 +36,7 @@ interface Row {
   normalWeeksCountB: number
   normalSimMinB: number
   replByAbsent: { absentId: string; absentName: string; weeks: number; totalMin: number }[]
+  soldeLive: number | null
 }
 interface SemaineTypeSlot {
   employee_id: string; week_type: 'A' | 'B'; day_of_week: number
@@ -104,6 +106,10 @@ export default function CalcAnnuelPage() {
         for (const r of arr) lissageMap[r.id] = { id: r.id, sixthWkMin: r.sixthWkMin ?? 0, normalWeeks: r.normalWeeks ?? 0 }
       } catch { /* ignore */ }
     }
+
+    // Solde live : même calcul que le Bilan 2026 dans PlanningPage
+    const isCurrentYear = year === new Date().getFullYear()
+    const soldeLiveMap = isCurrentYear ? await computeSoldeLive(companyId) : {}
 
     // Semaines de l'année (mêmes que countYearWeeks)
     const weekMondays: Date[] = []
@@ -300,7 +306,11 @@ export default function CalcAnnuelPage() {
       const semATotal = semSlots.filter(s => s.employee_id === emp.id && s.week_type === 'A' && !s.is_formation && s.start_minutes != null && s.end_minutes != null).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes ?? 0), 0)
       const semBTotal = semSlots.filter(s => s.employee_id === emp.id && s.week_type === 'B' && !s.is_formation && s.start_minutes != null && s.end_minutes != null).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes ?? 0), 0)
 
-      return { emp, T, effectiveLeave, cible, simulatedMin, holidayMin, formationMin, solde, carryover, sixthWkMin, droitConge, leaveMin, soldeConge, semATotal, semBTotal, replWeeksCount, replSimMin, normalWeeksCount, normalSimMin, normalWeeksCountA, normalSimMinA, normalWeeksCountB, normalSimMinB, replByAbsent: replByAbsentArr }
+      const soldeLive: number | null = isCurrentYear && soldeLiveMap[emp.id] !== undefined
+        ? soldeLiveMap[emp.id]
+        : null
+
+      return { emp, T, effectiveLeave, cible, simulatedMin, holidayMin, formationMin, solde, carryover, sixthWkMin, droitConge, leaveMin, soldeConge, semATotal, semBTotal, replWeeksCount, replSimMin, normalWeeksCount, normalSimMin, normalWeeksCountA, normalSimMinA, normalWeeksCountB, normalSimMinB, replByAbsent: replByAbsentArr, soldeLive }
     })
 
     setRows(result)
@@ -419,7 +429,10 @@ export default function CalcAnnuelPage() {
                       <Td className="text-right font-bold text-emerald-700">{fmtMinutes(theoryNormal + totalRepl)}</Td>
                       <Td className="text-right text-slate-600">{fmtMinutes(r.cible)}</Td>
                       {(() => { const s = theoryNormal + totalRepl - r.cible; const cls = s > 0 ? 'text-amber-600 font-bold' : s < 0 ? 'text-blue-600 font-bold' : 'text-emerald-600 font-bold'; return <Td className={`text-right ${cls}`}>{s >= 0 ? '+' : '−'}{fmtMinutes(Math.abs(s))}</Td> })()}
-                      <Td className="text-right text-slate-300 bg-amber-100/60">—</Td>
+                      {r.soldeLive !== null
+                        ? (() => { const s = r.soldeLive!; const cls = s > 0 ? 'text-amber-600 font-bold' : s < 0 ? 'text-blue-600 font-bold' : 'text-emerald-600 font-bold'; return <Td className={`text-right ${cls} bg-amber-100/60`}>{s >= 0 ? '+' : '−'}{fmtMinutes(Math.abs(s))}</Td> })()
+                        : <Td className="text-right text-slate-300 bg-amber-100/60">—</Td>
+                      }
                     </tr>
                   )
                 })}
