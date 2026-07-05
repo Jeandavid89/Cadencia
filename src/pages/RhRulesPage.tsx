@@ -271,6 +271,26 @@ export default function RhRulesPage() {
           </div>
         </div>
 
+        {/* ── Calcul du solde live ── */}
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/60">
+            <SectionTitle>Calcul du solde live</SectionTitle>
+          </div>
+          <div className="px-6 py-5 space-y-4">
+            <div className="space-y-2">
+              <Rule title="Cible annuelle" text="Cible = (T − semaines congé) × (heures contrat − heures formation). C'est le nombre d'heures que l'employée doit effectuer sur l'année, hors formation." />
+              <Rule title="Théorie accumulée" text="Théorie = (semaines normales A × total semaine A) + (semaines normales B × total semaine B) + heures de remplacement. Les semaines où l'employée remplace une collègue sont comptées séparément sur la base des heures de remplacement réelles." />
+              <Rule title="Solde annuel (Déc. annuel)" text="Solde annuel = Théorie − Cible. Une valeur positive signifie que l'employée a accumulé plus d'heures que prévu ; négative, elle est en retard sur son contrat." />
+              <Rule title="Écart semaine courante (Sem.)" text="Écart semaine = heures réellement saisies cette semaine − référence semaine type. La référence tient compte des absences du jour et des heures de remplacement si une collègue est en congé." />
+              <Rule title="Solde live (= résultat final)" text="SOLDE LIVE = Solde annuel + Écart semaine courante. C'est la valeur affichée dans Bilan 2026 et dans le tableau jaune du Calcul annuel. Elle se met à jour dès qu'une modification est apportée au planning." />
+            </div>
+            <div className="text-xs bg-amber-50 rounded-xl px-4 py-3 border border-amber-100">
+              <span className="font-semibold text-amber-700">Formule résumée : </span>
+              <span className="text-amber-600">SOLDE LIVE = (Théorie − Cible) + Écart semaine</span>
+            </div>
+          </div>
+        </div>
+
         {/* ── Technique ── */}
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/60">
