@@ -1,5 +1,9 @@
 import { supabase } from './supabase'
-import { getWeekType, defaultRefMonday, toDateStr, getMondayOf } from './weekUtils'
+import { getWeekType, defaultRefMonday, getMondayOf } from './weekUtils'
+
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 const eff = (s: number, e: number, b: number) => Math.max(0, e - s - b)
 
