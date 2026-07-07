@@ -753,6 +753,7 @@ export default function PlanningPage() {
             leavePartialSlots={leavePartialSlots}
             onDeleteLeavePartial={deleteLeavePartial}
             onGridRightClick={handleGridRightClick}
+            weekStart={weekStart}
           />
         </div>
 

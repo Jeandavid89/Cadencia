@@ -62,6 +62,7 @@ interface Props {
   leavePartialSlots?: LeavePartialSlot[]
   onDeleteLeavePartial?: (id: string) => void
   onGridRightClick?: (empId: string, day: number, minuteAt: number, x: number, y: number) => void
+  weekStart?: Date
 }
 
 let _uid = 0
@@ -77,7 +78,9 @@ export const eff = (s: PlannerSlot) => Math.max(0, s.end_min - s.start_min - s.b
 type Drag = { type: 'move' | 'top' | 'bot'; id: string; startY: number; origStart: number; origEnd: number } | null
 type CtxMenu = { x: number; y: number; slotId: string } | null
 
-export default function WeekPlanner({ employees, slots, onChange, onMarkLeave, maxHeight = G_H + H_DAY + H_EMP + 20, readOnly = false, dayOverlays = [], showFooter = true, leavePartialSlots = [], onDeleteLeavePartial, onGridRightClick }: Props) {
+const MONTHS_FR = ['jan.','fév.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.']
+
+export default function WeekPlanner({ employees, slots, onChange, onMarkLeave, maxHeight = G_H + H_DAY + H_EMP + 20, readOnly = false, dayOverlays = [], showFooter = true, leavePartialSlots = [], onDeleteLeavePartial, onGridRightClick, weekStart }: Props) {
   const [editId, setEditId] = useState<string | null>(null)
   const [ctxMenu, setCtxMenu] = useState<CtxMenu>(null)
   const drag = useRef<Drag>(null)
@@ -131,11 +134,16 @@ export default function WeekPlanner({ employees, slots, onChange, onMarkLeave, m
         {/* Sticky day header */}
         <div className="sticky top-0 z-20 flex w-full bg-white border-b border-slate-200" style={{ height: H_DAY }}>
           <div style={{ width: 40, flexShrink: 0 }} className="border-r border-slate-100" />
-          {DAYS.map(d => (
-            <div key={d.n} className="flex-1 border-l border-slate-200 flex items-center justify-center">
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{d.l}</span>
-            </div>
-          ))}
+          {DAYS.map(d => {
+            const dayDate = weekStart ? new Date(weekStart.getTime() + (d.n - 1) * 86400000) : null
+            const dateLabel = dayDate ? ` ${dayDate.getDate().toString().padStart(2, '0')} ${MONTHS_FR[dayDate.getMonth()]}` : ''
+            return (
+              <div key={d.n} className="flex-1 border-l border-slate-200 flex items-center justify-center gap-1.5">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{d.l}</span>
+                {dateLabel && <span className="text-[11px] text-slate-400 font-medium">{dateLabel}</span>}
+              </div>
+            )
+          })}
         </div>
 
         {/* Sticky employee sub-header */}
