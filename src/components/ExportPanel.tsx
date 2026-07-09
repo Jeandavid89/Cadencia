@@ -36,22 +36,16 @@ function getMondayOf(date: Date): Date {
   d.setHours(0, 0, 0, 0)
   return d
 }
-
-function addDays(d: Date, n: number): Date {
-  const r = new Date(d); r.setDate(r.getDate() + n); return r
-}
-
+function addDays(d: Date, n: number): Date { const r = new Date(d); r.setDate(r.getDate() + n); return r }
 function toLocalDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
-
 function getISOWeek(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
   d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7))
   const ys = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
   return Math.ceil((((d.getTime() - ys.getTime()) / 86400000) + 1) / 7)
 }
-
 function getWeeksInRange(from: Date, to: Date): Date[] {
   const weeks: Date[] = []
   let cur = getMondayOf(from)
@@ -59,10 +53,7 @@ function getWeeksInRange(from: Date, to: Date): Date[] {
   while (cur <= end) { weeks.push(new Date(cur)); cur = addDays(cur, 7) }
   return weeks
 }
-
-function fmtTime(m: number) {
-  return `${Math.floor(m / 60)}h${(m % 60).toString().padStart(2, '0')}`
-}
+function fmtTime(m: number) { return `${Math.floor(m / 60)}h${(m % 60).toString().padStart(2, '0')}` }
 
 // ─── Option A : HTML texte ────────────────────────────────────────────────────
 
@@ -70,39 +61,33 @@ function buildPrintHTML(weeks: Date[], slots: Slot[], employees: Employee[], hol
   const weekBlocks = weeks.map(weekMon => {
     const fri = addDays(weekMon, 4)
     const isoW = getISOWeek(weekMon)
-
     const headerCols = [0,1,2,3,4].map(o => {
       const d = addDays(weekMon, o)
       return `<th>${DAYS_FR[o]}<br><small>${d.getDate().toString().padStart(2,'0')} ${MONTHS_LONG[d.getMonth()]}</small></th>`
     }).join('')
-
     const rows = employees.map(emp => {
       const cells = [0,1,2,3,4].map(o => {
         const day = addDays(weekMon, o)
         const ds = toLocalDateStr(day)
         const daySlots = slots.filter(s => s.employee_id === emp.id && s.date === ds)
-        if (holSet.has(ds)) return `<td class="special hol">Férié</td>`
+        if (holSet.has(ds)) return `<td class="special hol">Ferie</td>`
         if (daySlots.some(s => s.slot_type === 'leave_week' || s.slot_type === 'leave_day'))
-          return `<td class="special cg">Congé</td>`
+          return `<td class="special cg">Conge</td>`
         const work = daySlots.filter(s => (s.slot_type === 'work' || s.slot_type === 'formation') && s.start_minutes != null)
-        if (work.length === 0) return `<td class="empty">—</td>`
+        if (work.length === 0) return `<td class="empty">-</td>`
         const lines = work.map(s =>
-          `<span class="${s.slot_type === 'formation' ? 'form' : ''}">${fmtTime(s.start_minutes!)} – ${fmtTime(s.end_minutes!)}</span>`
+          `<span class="${s.slot_type === 'formation' ? 'form' : ''}">${fmtTime(s.start_minutes!)} - ${fmtTime(s.end_minutes!)}</span>`
         ).join('<br>')
         return `<td>${lines}</td>`
       }).join('')
       return `<tr><td class="name">${emp.first_name} ${emp.last_name}</td>${cells}</tr>`
     }).join('')
-
     return `<div class="week-block">
       <div class="week-title">
-        <strong>Planning — Semaine ${isoW}</strong>
-        <span>${weekMon.getDate().toString().padStart(2,'0')} ${MONTHS_LONG[weekMon.getMonth()]} → ${fri.getDate().toString().padStart(2,'0')} ${MONTHS_LONG[fri.getMonth()]} ${fri.getFullYear()}</span>
+        <strong>Planning - Semaine ${isoW}</strong>
+        <span>${weekMon.getDate().toString().padStart(2,'0')} ${MONTHS_LONG[weekMon.getMonth()]} - ${fri.getDate().toString().padStart(2,'0')} ${MONTHS_LONG[fri.getMonth()]} ${fri.getFullYear()}</span>
       </div>
-      <table>
-        <thead><tr><th class="emp-col">Employée</th>${headerCols}</tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <table><thead><tr><th class="emp-col">Employe</th>${headerCols}</tr></thead><tbody>${rows}</tbody></table>
     </div>`
   }).join('')
 
@@ -147,15 +132,15 @@ function fillRoundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: n
   ctx.fill()
 }
 
-// Dessine une semaine dans une section du canvas (offsetY = position verticale de départ)
 function drawWeekSection(
   ctx: CanvasRenderingContext2D,
   weekMon: Date,
   employees: Employee[],
   slots: Slot[],
   holSet: Set<string>,
-  canvasW: number,
+  offsetX: number,
   offsetY: number,
+  contentW: number,
   sectionH: number,
 ) {
   const G_START = 420
@@ -164,33 +149,29 @@ function drawWeekSection(
   const DAY_H   = 24
   const TIME_W  = 38
   const GRID_H  = sectionH - TITLE_H - DAY_H
-  const GRID_W  = canvasW - TIME_W
+  const GRID_W  = contentW - TIME_W
   const DAY_W   = GRID_W / 5
   const EMP_W   = DAY_W / employees.length
   const PX_MIN  = GRID_H / (G_END - G_START)
+  const TX      = offsetX + TIME_W
 
   const isoW = getISOWeek(weekMon)
   const fri  = addDays(weekMon, 4)
 
-  // Titre de la semaine
-  ctx.fillStyle = '#1e293b'
-  ctx.font = 'bold 13px Arial'
-  ctx.fillText(`Planning — Semaine ${isoW}`, TIME_W + 4, offsetY + 14)
-  ctx.fillStyle = '#64748b'
-  ctx.font = '11px Arial'
+  ctx.fillStyle = '#1e293b'; ctx.font = 'bold 13px Arial'
+  ctx.fillText(`Planning - Semaine ${isoW}`, TX + 4, offsetY + 14)
+  ctx.fillStyle = '#64748b'; ctx.font = '11px Arial'
   ctx.fillText(
-    `${weekMon.getDate().toString().padStart(2,'0')} ${MONTHS_SHORT[weekMon.getMonth()]} → ${fri.getDate().toString().padStart(2,'0')} ${MONTHS_SHORT[fri.getMonth()]} ${fri.getFullYear()}`,
-    TIME_W + 4, offsetY + 28
+    `${weekMon.getDate().toString().padStart(2,'0')} ${MONTHS_SHORT[weekMon.getMonth()]} - ${fri.getDate().toString().padStart(2,'0')} ${MONTHS_SHORT[fri.getMonth()]} ${fri.getFullYear()}`,
+    TX + 4, offsetY + 28
   )
 
-  // En-têtes jours
   const dayY = offsetY + TITLE_H
-  ctx.fillStyle = '#f8fafc'
-  ctx.fillRect(TIME_W, dayY, GRID_W, DAY_H)
+  ctx.fillStyle = '#f8fafc'; ctx.fillRect(TX, dayY, GRID_W, DAY_H)
 
   for (let di = 0; di < 5; di++) {
     const day = addDays(weekMon, di)
-    const x = TIME_W + di * DAY_W
+    const x = TX + di * DAY_W
     ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1
     ctx.beginPath(); ctx.moveTo(x, dayY); ctx.lineTo(x, offsetY + sectionH); ctx.stroke()
     ctx.fillStyle = '#334155'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center'
@@ -200,34 +181,30 @@ function drawWeekSection(
   }
   ctx.textAlign = 'left'
 
-  // Axe temps
   ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1
-  ctx.beginPath(); ctx.moveTo(TIME_W, offsetY + TITLE_H); ctx.lineTo(TIME_W, offsetY + sectionH); ctx.stroke()
+  ctx.beginPath(); ctx.moveTo(TX, offsetY + TITLE_H); ctx.lineTo(TX, offsetY + sectionH); ctx.stroke()
 
-  // Lignes horaires
   const gridY = dayY + DAY_H
   for (let h = 7; h <= 19; h++) {
     const y = gridY + (h * 60 - G_START) * PX_MIN
     ctx.strokeStyle = h % 2 === 0 ? '#e2e8f0' : '#f8fafc'; ctx.lineWidth = 1
-    ctx.beginPath(); ctx.moveTo(TIME_W, y); ctx.lineTo(canvasW, y); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(TX, y); ctx.lineTo(offsetX + contentW, y); ctx.stroke()
     ctx.fillStyle = '#94a3b8'; ctx.font = '8px Arial'
-    ctx.fillText(`${h}h`, 2, y + 3)
+    ctx.fillText(`${h}h`, offsetX + 2, y + 3)
   }
 
-  // Bordure grille
   ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1
-  ctx.strokeRect(TIME_W, gridY, GRID_W, GRID_H)
+  ctx.strokeRect(TX, gridY, GRID_W, GRID_H)
 
-  // Slots
   for (let di = 0; di < 5; di++) {
     const day = addDays(weekMon, di)
     const ds  = toLocalDateStr(day)
-    const x0  = TIME_W + di * DAY_W
+    const x0  = TX + di * DAY_W
 
     if (holSet.has(ds)) {
       ctx.fillStyle = '#f8fafc'; ctx.fillRect(x0, gridY, DAY_W, GRID_H)
       ctx.fillStyle = '#94a3b8'; ctx.font = '9px Arial'; ctx.textAlign = 'center'
-      ctx.fillText('Férié', x0 + DAY_W / 2, gridY + GRID_H / 2)
+      ctx.fillText('Ferie', x0 + DAY_W / 2, gridY + GRID_H / 2)
       ctx.textAlign = 'left'; continue
     }
 
@@ -240,7 +217,7 @@ function drawWeekSection(
       if (isLeave) {
         ctx.fillStyle = '#eff6ff'; ctx.fillRect(empX + 1, gridY, EMP_W - 2, GRID_H)
         ctx.fillStyle = '#3b82f6'; ctx.font = 'bold 7px Arial'; ctx.textAlign = 'center'
-        ctx.fillText('Congé', empX + EMP_W / 2, gridY + GRID_H / 2)
+        ctx.fillText('Conge', empX + EMP_W / 2, gridY + GRID_H / 2)
         ctx.textAlign = 'left'; return
       }
 
@@ -266,11 +243,18 @@ function drawWeekSection(
   }
 }
 
-// Un canvas portrait A4 = 2 semaines empilées
-function buildPortraitCanvases(weeksData: { weekMon: Date; slots: Slot[] }[], employees: Employee[], holSet: Set<string>): HTMLCanvasElement[] {
-  const W = 794
-  const H = 1122
-  const HALF = H / 2
+function buildPortraitCanvases(
+  weeksData: { weekMon: Date; slots: Slot[] }[],
+  employees: Employee[],
+  holSet: Set<string>,
+): HTMLCanvasElement[] {
+  const W         = 794
+  const H         = 1122
+  const MX        = 28
+  const MY        = 22
+  const GAP       = 14
+  const CONTENT_W = W - 2 * MX
+  const SECTION_H = Math.floor((H - 2 * MY - GAP) / 2)
   const canvases: HTMLCanvasElement[] = []
 
   for (let i = 0; i < weeksData.length; i += 2) {
@@ -279,17 +263,16 @@ function buildPortraitCanvases(weeksData: { weekMon: Date; slots: Slot[] }[], em
     const ctx = canvas.getContext('2d')!
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H)
 
-    // Trait de séparation central
-    if (weeksData[i + 1]) {
-      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1
-      ctx.setLineDash([4, 4])
-      ctx.beginPath(); ctx.moveTo(0, HALF); ctx.lineTo(W, HALF); ctx.stroke()
-      ctx.setLineDash([])
-    }
+    drawWeekSection(ctx, weeksData[i].weekMon, employees, weeksData[i].slots, holSet, MX, MY, CONTENT_W, SECTION_H)
 
-    drawWeekSection(ctx, weeksData[i].weekMon, employees, weeksData[i].slots, holSet, W, 0, HALF)
-    if (weeksData[i + 1])
-      drawWeekSection(ctx, weeksData[i + 1].weekMon, employees, weeksData[i + 1].slots, holSet, W, HALF, HALF)
+    if (weeksData[i + 1]) {
+      const sepY = MY + SECTION_H + GAP / 2
+      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1
+      ctx.setLineDash([5, 5])
+      ctx.beginPath(); ctx.moveTo(MX, sepY); ctx.lineTo(W - MX, sepY); ctx.stroke()
+      ctx.setLineDash([])
+      drawWeekSection(ctx, weeksData[i + 1].weekMon, employees, weeksData[i + 1].slots, holSet, MX, MY + SECTION_H + GAP, CONTENT_W, SECTION_H)
+    }
 
     canvases.push(canvas)
   }
@@ -321,23 +304,19 @@ export default function ExportPanel({ companyId, employees, holidays, onClose }:
 
   const holSet = new Set(holidays.map(h => h.date))
 
-  async function fetchSlots(from: Date, to: Date): Promise<Slot[]> {
-    const { data } = await supabase
-      .from('planning_slots')
-      .select('employee_id,date,start_minutes,end_minutes,break_minutes,slot_type')
-      .eq('company_id', companyId)
-      .gte('date', toLocalDateStr(from))
-      .lte('date', toLocalDateStr(addDays(to, 4)))
-    return (data ?? []) as Slot[]
-  }
-
   async function handlePrintText() {
     setLoading(true); setProgress('Chargement...')
     try {
       const from  = getMondayOf(new Date(fromDate + 'T00:00:00'))
       const to    = getMondayOf(new Date(toDate   + 'T00:00:00'))
       const weeks = getWeeksInRange(from, to)
-      const slots = await fetchSlots(from, to)
+      const { data } = await supabase
+        .from('planning_slots')
+        .select('employee_id,date,start_minutes,end_minutes,break_minutes,slot_type')
+        .eq('company_id', companyId)
+        .gte('date', toLocalDateStr(from))
+        .lte('date', toLocalDateStr(addDays(to, 4)))
+      const slots = (data ?? []) as Slot[]
       const html  = buildPrintHTML(weeks, slots, employees, holSet)
       const w = window.open('', '_blank')
       if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 300) }
@@ -353,7 +332,7 @@ export default function ExportPanel({ companyId, employees, holidays, onClose }:
       const weeksData: { weekMon: Date; slots: Slot[] }[] = []
 
       for (let i = 0; i < weeks.length; i++) {
-        setProgress(`Chargement semaine ${i + 1} / ${weeks.length}…`)
+        setProgress(`Chargement semaine ${i + 1} / ${weeks.length}...`)
         const weekMon = weeks[i]
         const { data } = await supabase
           .from('planning_slots')
@@ -364,7 +343,7 @@ export default function ExportPanel({ companyId, employees, holidays, onClose }:
         weeksData.push({ weekMon, slots: (data ?? []) as Slot[] })
       }
 
-      setProgress('Génération des pages…')
+      setProgress('Generation des pages...')
       const canvases = buildPortraitCanvases(weeksData, employees, holSet)
       const html = buildVisualHTML(canvases)
       const w = window.open('', '_blank')
@@ -376,7 +355,7 @@ export default function ExportPanel({ companyId, employees, holidays, onClose }:
     <div className="absolute right-0 top-12 z-50 bg-white rounded-2xl shadow-xl border border-slate-200 w-72 p-4" onClick={e => e.stopPropagation()}>
       <div className="flex items-center justify-between mb-4">
         <p className="font-bold text-slate-700 text-sm">Exporter le planning</p>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">×</button>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">x</button>
       </div>
 
       <div className="space-y-3 mb-4">
@@ -397,15 +376,15 @@ export default function ExportPanel({ companyId, employees, holidays, onClose }:
       <div className="space-y-2">
         <button onClick={handlePrintText} disabled={loading}
           className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 disabled:opacity-40 transition-colors">
-          🖨️ Imprimer — Tableau texte
+          Imprimer - Tableau texte
         </button>
         <button onClick={handlePrintVisual} disabled={loading}
           className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-indigo-700 border border-indigo-200 rounded-xl bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40 transition-colors">
-          🎨 Imprimer — Visuel coloré
+          Imprimer - Visuel colore
         </button>
       </div>
 
-      <p className="text-[10px] text-slate-400 text-center mt-3">Dans la boîte d'impression → "Enregistrer en PDF"</p>
+      <p className="text-[10px] text-slate-400 text-center mt-3">Dans la boite d'impression, choisir "Enregistrer en PDF"</p>
     </div>
   )
 }
