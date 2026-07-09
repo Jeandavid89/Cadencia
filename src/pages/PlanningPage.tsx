@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import WeekPlanner, { EMP_COLORS, eff, type PlannerSlot, type PlannerEmployee, type DayOverlay, type LeavePartialSlot } from '../components/WeekPlanner'
+import ExportPanel from '../components/ExportPanel'
 import { getWeekType, defaultRefMonday } from '../lib/weekUtils'
 
 // ─── helpers ISO week ───
@@ -77,6 +78,7 @@ export default function PlanningPage() {
   const [bilanRows, setBilanRows] = useState<BilanRow[]>([])
   const [bilanLoading, setBilanLoading] = useState(false)
   const [leavePartialForm, setLeavePartialForm] = useState<{ empId: string; day: number; startMin: number; endMin: number; x: number; y: number } | null>(null)
+  const [exportOpen, setExportOpen] = useState(false)
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -517,6 +519,20 @@ export default function PlanningPage() {
           </div>
           <div className="flex items-center gap-4">
             {saving && <div className="flex items-center gap-2 text-xs text-slate-400"><div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-indigo-400 rounded-full animate-spin" />Enregistrement…</div>}
+            <div className="relative">
+              <button onClick={e => { e.stopPropagation(); setExportOpen(v => !v); setBilanOpen(false) }}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 border border-slate-200 rounded-xl bg-white hover:bg-slate-50 transition-colors">
+                Exporter PDF
+              </button>
+              {exportOpen && (
+                <ExportPanel
+                  companyId={companyId}
+                  employees={employees}
+                  holidays={holidays}
+                  onClose={() => setExportOpen(false)}
+                />
+              )}
+            </div>
             <div className="relative">
               <button onClick={e => { e.stopPropagation(); if (!bilanOpen) loadBilan(); setBilanOpen(v => !v) }}
                 className="px-4 py-2 text-xs font-semibold text-amber-700 border border-amber-300 rounded-xl bg-amber-50 hover:bg-amber-100 transition-colors">
