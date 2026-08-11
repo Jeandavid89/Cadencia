@@ -1,15 +1,15 @@
 import { supabase } from './supabase'
 import { getWeekType, defaultRefMonday, getMondayOf, toDateStr } from './weekUtils'
-
-const eff = (s: number, e: number, b: number) => Math.max(0, e - s - b)
+import { eff, computeSimplifiedBilan, type SemaineTypeSlot, type LeaveSlot, type ReplacementSlot } from './bilanCalc'
 
 export async function computeSoldeLive(companyId: string): Promise<Record<string, number>> {
   const year = new Date().getFullYear()
   const from = `${year}-01-01`
   const to = `${year}-12-31`
 
-  const [{ data: emps }, { data: stSlots }, { data: leaveSlots }, { data: replSlotsData }, { data: coData }, { data: carryData }] = await Promise.all([
+  const [{ data: emps }, { data: hols }, { data: stSlots }, { data: leaveSlots }, { data: replSlotsData }, { data: coData }, { data: carryData }] = await Promise.all([
     supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year').eq('company_id', companyId).eq('active', true).order('sort_order'),
+    supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
     supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
     supabase.from('planning_slots').select('employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_week', 'leave_day', 'leave_partial']),
     supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
@@ -22,36 +22,19 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
   const refStr = (coData)?.reference_week_date as string | null
   const ref = refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year)
 
-  const semSlots = (stSlots ?? []) as { employee_id: string; week_type: 'A' | 'B'; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
-  const lSlots = (leaveSlots ?? []) as { employee_id: string; date: string; slot_type: string; start_minutes?: number | null; end_minutes?: number | null }[]
-  const rSlots = (replSlotsData ?? []) as { absent_employee_id: string; present_employee_id: string; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
-  const carryMap: Record<string, number> = {}
-  for (const c of (carryData ?? []) as { employee_id: string; carryover_minutes: number }[]) carryMap[c.employee_id] = c.carryover_minutes
+  const semSlots = (stSlots ?? []) as SemaineTypeSlot[]
+  const lSlots = (leaveSlots ?? []) as LeaveSlot[]
+  const rSlots = (replSlotsData ?? []) as ReplacementSlot[]
+  const carryMap: Record<string, { carryover_minutes: number; carryover_leave_minutes: number }> = {}
+  for (const c of (carryData ?? []) as { employee_id: string; carryover_minutes: number }[]) carryMap[c.employee_id] = { carryover_minutes: c.carryover_minutes, carryover_leave_minutes: 0 }
 
-  // Semaines de l'année
-  const weekMondays: Date[] = []
-  {
-    const seen = new Set<number>()
-    const d = new Date(from + 'T00:00:00')
-    const end = new Date(to + 'T00:00:00')
-    while (d <= end) {
-      const dow = d.getDay()
-      if (dow >= 1 && dow <= 5) {
-        const mon = getMondayOf(new Date(d))
-        if (!seen.has(mon.getTime())) { seen.add(mon.getTime()); weekMondays.push(new Date(mon)) }
-      }
-      d.setDate(d.getDate() + 1)
-    }
-  }
-  const T = weekMondays.length
+  const holSet = new Set(((hols ?? []) as { date: string }[]).map(h => h.date))
+  const simplified = computeSimplifiedBilan({
+    year, refMonday: ref, employees: emps, semSlots, leaveSlots: lSlots, replSlots: rSlots,
+    holSet, hasSixthWeek: false, capMap: {}, carryMap,
+  })
 
-  // Semaines d'absence par employé
-  const absentWeeksByEmp: Record<string, Set<string>> = {}
-  for (const emp of emps) absentWeeksByEmp[emp.id] = new Set()
-  for (const ls of lSlots.filter(s => s.slot_type === 'leave_week'))
-    absentWeeksByEmp[ls.employee_id]?.add(toDateStr(getMondayOf(new Date(ls.date + 'T12:00:00'))))
-
-  // Données semaine courante (pour weekSolde — équivalent de getDeviation dans PlanningPage)
+  // Données semaine courante (weekSolde — équivalent de getDeviation dans PlanningPage)
   const cwMon = getMondayOf(new Date())
   const cwWeekType = getWeekType(cwMon, ref)
   const cwStart = toDateStr(cwMon)
@@ -67,42 +50,6 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
   const result: Record<string, number> = {}
 
   for (const emp of emps) {
-    const effectiveContract = emp.contract_minutes_per_week - emp.formation_minutes_per_week
-    const cible = (T - emp.leave_weeks_per_year) * effectiveContract
-
-    const semATotal = semSlots.filter(s => s.employee_id === emp.id && s.week_type === 'A' && !s.is_formation).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
-    const semBTotal = semSlots.filter(s => s.employee_id === emp.id && s.week_type === 'B' && !s.is_formation).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
-
-    const absentWeekMondays = absentWeeksByEmp[emp.id]
-    const leaveDayDates = new Set(lSlots.filter(s => s.employee_id === emp.id && s.slot_type === 'leave_day').map(s => s.date))
-
-    let normalWeeksCountA = 0, normalWeeksCountB = 0
-    const replByAbsent: Record<string, number> = {}
-
-    for (const weekMon of weekMondays) {
-      const monKey = toDateStr(weekMon)
-      const weekType = getWeekType(weekMon, ref)
-      if (absentWeekMondays.has(monKey)) continue
-      const absentColleagues = (emps).filter((o: any) => o.id !== emp.id && absentWeeksByEmp[o.id]?.has(monKey))
-      let weekIsRepl = false
-      for (let offset = 0; offset <= 4; offset++) {
-        const day = new Date(weekMon); day.setDate(weekMon.getDate() + offset)
-        const ds = toDateStr(day); const jsDay = day.getDay()
-        if (leaveDayDates.has(ds)) continue
-        const dayRepl = rSlots.filter(r => r.present_employee_id === emp.id && r.day_of_week === jsDay && !r.is_formation && absentColleagues.some((a: any) => a.id === r.absent_employee_id))
-        if (dayRepl.length > 0) {
-          weekIsRepl = true
-          for (const r of dayRepl) replByAbsent[r.absent_employee_id] = (replByAbsent[r.absent_employee_id] ?? 0) + eff(r.start_minutes, r.end_minutes, r.break_minutes)
-        }
-      }
-      if (!weekIsRepl) { if (weekType === 'A') normalWeeksCountA++; else normalWeeksCountB++ }
-    }
-
-    const theoryNormal = normalWeeksCountA * semATotal + normalWeeksCountB * semBTotal
-    const totalRepl = Object.values(replByAbsent).reduce((a, v) => a + v, 0)
-    const soldeHeures = theoryNormal + totalRepl - cible
-
-    // weekSolde : même logique que getDeviation() dans PlanningPage
     let weekSolde = 0
     if (!cwAbsentEmps.has(emp.id)) {
       const absentDays = new Set<number>()
@@ -120,7 +67,7 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
       weekSolde = actual - reference
     }
 
-    result[emp.id] = soldeHeures + weekSolde + (carryMap[emp.id] ?? 0)
+    result[emp.id] = simplified[emp.id].soldeHeures + weekSolde
   }
 
   return result

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
-import { getWeekType, defaultRefMonday, toDateStr, getMondayOf } from '../lib/weekUtils'
+import { getWeekType, defaultRefMonday, toDateStr, getMondayOf, getYearWeekMondays } from '../lib/weekUtils'
 import { computeSoldeLive } from '../lib/bilanUtils'
 
 interface Employee {
@@ -157,24 +157,8 @@ export default function CalcAnnuelPage() {
     const isCurrentYear = year === new Date().getFullYear()
     const soldeLiveMap = isCurrentYear ? await computeSoldeLive(companyId) : {}
 
-    // Semaines de l'année (mêmes que countYearWeeks)
-    const weekMondays: Date[] = []
-    {
-      const seen = new Set<number>()
-      const d = new Date(from + 'T00:00:00')
-      const end = new Date(to + 'T00:00:00')
-      while (d <= end) {
-        const dow = d.getDay()
-        if (dow >= 1 && dow <= 5) {
-          const mon = getMondayOf(new Date(d))
-          if (!seen.has(mon.getTime())) {
-            seen.add(mon.getTime())
-            weekMondays.push(new Date(mon))
-          }
-        }
-        d.setDate(d.getDate() + 1)
-      }
-    }
+    // Semaines de l'année
+    const weekMondays: Date[] = getYearWeekMondays(year)
     const T = weekMondays.length
     if (weekMondays.length > 0) {
       const firstMon = weekMondays[0]

@@ -17,9 +17,13 @@ export function getWeekType(date: Date, refMonday: Date): 'A' | 'B' {
   return ((diff % 2) + 2) % 2 === 0 ? 'A' : 'B'
 }
 
-export function countYearWeeks(year: number, refMonday: Date): { nA: number; nB: number; total: number } {
+// Lundis des semaines de l'année qui contiennent au moins un jour ouvré
+// (lun-ven) dans [year-01-01, year-12-31]. Utilisé comme base commune par
+// CalcAnnuelPage, PlanningPage et computeSoldeLive pour compter les
+// semaines simulées.
+export function getYearWeekMondays(year: number): Date[] {
+  const mondays: Date[] = []
   const seen = new Set<number>()
-  let nA = 0, nB = 0
   const d = new Date(year, 0, 1)
   const end = new Date(year, 11, 31)
   while (d <= end) {
@@ -29,10 +33,18 @@ export function countYearWeeks(year: number, refMonday: Date): { nA: number; nB:
       const key = mon.getTime()
       if (!seen.has(key)) {
         seen.add(key)
-        if (getWeekType(d, refMonday) === 'A') { nA++ } else { nB++ }
+        mondays.push(mon)
       }
     }
     d.setDate(d.getDate() + 1)
+  }
+  return mondays
+}
+
+export function countYearWeeks(year: number, refMonday: Date): { nA: number; nB: number; total: number } {
+  let nA = 0, nB = 0
+  for (const mon of getYearWeekMondays(year)) {
+    if (getWeekType(mon, refMonday) === 'A') { nA++ } else { nB++ }
   }
   return { nA, nB, total: nA + nB }
 }
