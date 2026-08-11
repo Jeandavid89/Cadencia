@@ -52,6 +52,17 @@ describe('getYearWeekMondays', () => {
   })
 })
 
+describe('getYearWeekMondays - non-régression anti-double-comptage', () => {
+  it('aucune semaine n\'est partagée entre deux années consécutives', () => {
+    for (let year = 2023; year < 2033; year++) {
+      const a = new Set(getYearWeekMondays(year).map(d => d.getTime()))
+      const b = getYearWeekMondays(year + 1)
+      const overlap = b.filter(d => a.has(d.getTime()))
+      expect(overlap, `chevauchement ${year}/${year + 1}`).toHaveLength(0)
+    }
+  })
+})
+
 describe('countYearWeeks', () => {
   it('nA + nB == total == getYearWeekMondays(year).length', () => {
     const ref = defaultRefMonday(2026)

@@ -17,26 +17,23 @@ export function getWeekType(date: Date, refMonday: Date): 'A' | 'B' {
   return ((diff % 2) + 2) % 2 === 0 ? 'A' : 'B'
 }
 
-// Lundis des semaines de l'année qui contiennent au moins un jour ouvré
-// (lun-ven) dans [year-01-01, year-12-31]. Utilisé comme base commune par
-// CalcAnnuelPage, PlanningPage et computeSoldeLive pour compter les
-// semaines simulées.
+// Lundis des semaines "rattachées" à l'année. Une semaine (lun-ven) est
+// rattachée à l'année qui contient son mercredi (jour central des 5 jours
+// ouvrés) - une semaine à cheval sur deux années n'est donc jamais comptée
+// deux fois (ni dans les deux années, ni dans aucune). Utilisé comme base
+// commune par CalcAnnuelPage, PlanningPage et computeSoldeLive pour compter
+// les semaines simulées.
 export function getYearWeekMondays(year: number): Date[] {
   const mondays: Date[] = []
-  const seen = new Set<number>()
-  const d = new Date(year, 0, 1)
-  const end = new Date(year, 11, 31)
-  while (d <= end) {
-    const dow = d.getDay()
-    if (dow >= 1 && dow <= 5) {
-      const mon = getMondayOf(new Date(d))
-      const key = mon.getTime()
-      if (!seen.has(key)) {
-        seen.add(key)
-        mondays.push(mon)
-      }
-    }
-    d.setDate(d.getDate() + 1)
+  let mon = getMondayOf(new Date(year, 0, 1))
+  while (true) {
+    const wed = new Date(mon)
+    wed.setDate(wed.getDate() + 2)
+    const wedYear = wed.getFullYear()
+    if (wedYear === year) mondays.push(new Date(mon))
+    else if (wedYear > year) break
+    mon = new Date(mon)
+    mon.setDate(mon.getDate() + 7)
   }
   return mondays
 }
