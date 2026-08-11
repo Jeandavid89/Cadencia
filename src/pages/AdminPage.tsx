@@ -116,10 +116,10 @@ export default function AdminPage() {
         supabase.from('public_holidays').select('*').eq('company_id', companyId).eq('year', CURRENT_YEAR).order('date'),
       ])
       if (co) {
-        setSixthWeek((co as any).sixth_week)
-        const ref = (co as any).reference_week_date ?? toDateStr(defaultRefMonday(CURRENT_YEAR))
+        setSixthWeek((co).sixth_week)
+        const ref = (co).reference_week_date ?? toDateStr(defaultRefMonday(CURRENT_YEAR))
         setRefDateStr(ref)
-        setTeamValidatedAt((co as any).team_validated_at ?? null)
+        setTeamValidatedAt((co).team_validated_at ?? null)
       }
       if (emps) setEmployees(emps)
       if (hols && hols.length > 0) setHolidays(hols)
@@ -135,18 +135,21 @@ export default function AdminPage() {
 
   async function toggleSixthWeek(val: boolean) {
     setSixthWeek(val)
-    await supabase.from('companies').update({ sixth_week: val }).eq('id', companyId)
+    const { error } = await supabase.from('companies').update({ sixth_week: val }).eq('id', companyId)
+    if (error) alert('Erreur lors de l\'enregistrement de la 6e semaine : ' + error.message)
   }
 
   async function validateTeam() {
     const now = new Date().toISOString()
     setTeamValidatedAt(now)
-    await supabase.from('companies').update({ team_validated_at: now }).eq('id', companyId)
+    const { error } = await supabase.from('companies').update({ team_validated_at: now }).eq('id', companyId)
+    if (error) alert('Erreur lors de la validation de l\'équipe : ' + error.message)
   }
 
   async function invalidateTeam() {
     setTeamValidatedAt(null)
-    await supabase.from('companies').update({ team_validated_at: null }).eq('id', companyId)
+    const { error } = await supabase.from('companies').update({ team_validated_at: null }).eq('id', companyId)
+    if (error) alert('Erreur lors de l\'invalidation de l\'équipe : ' + error.message)
   }
 
   async function addHoliday() {

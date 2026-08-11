@@ -44,6 +44,8 @@ export default function ReplacementPage() {
   const [computed, setComputed] = useState(false)
   const [stale, setStale] = useState(false)
   const [showExplain, setShowExplain] = useState(false)
+  const [confirmSend, setConfirmSend] = useState(false)
+  const [sending, setSending] = useState(false)
   const [results, setResults] = useState<{
     id: string; name: string; normal2w: number; replAnnual: number; sixthWkMin: number; normalWeeks: number; adjustPerCycle: number; semA: number; semB: number; semA_noSixth: number; semB_noSixth: number
   }[]>([])
@@ -226,6 +228,7 @@ export default function ReplacementPage() {
   }
 
   async function sendToSemaineType() {
+    setSending(true)
     const year = new Date().getFullYear()
     const rows = results.map(r => ({
       company_id: companyId,
@@ -235,9 +238,14 @@ export default function ReplacementPage() {
       sem_b_minutes: r.semB,
       updated_at: new Date().toISOString(),
     }))
-    await supabase.from('week_targets').upsert(rows, { onConflict: 'employee_id,year' })
+    const { error: errA } = await supabase.from('week_targets').upsert(rows, { onConflict: 'employee_id,year' })
+    if (errA) {
+      setSending(false)
+      alert('Erreur lors de l\'envoi des cibles vers Semaine Type :\n' + errA.message)
+      return
+    }
 
-    // Colonne B — nécessite la migration DB (sem_a_no_sixth_minutes, sem_b_no_sixth_minutes)
+    // Colonne "sans 6e" (sem_a_no_sixth_minutes, sem_b_no_sixth_minutes)
     const rowsB = results.map(r => ({
       company_id: companyId,
       employee_id: r.id,
@@ -245,8 +253,14 @@ export default function ReplacementPage() {
       sem_a_no_sixth_minutes: r.semA_noSixth,
       sem_b_no_sixth_minutes: r.semB_noSixth,
     }))
-    await supabase.from('week_targets').upsert(rowsB, { onConflict: 'employee_id,year' })
+    const { error: errB } = await supabase.from('week_targets').upsert(rowsB, { onConflict: 'employee_id,year' })
+    setSending(false)
+    if (errB) {
+      alert('Cibles principales enregistrées, mais erreur sur les cibles "sans 6e semaine" :\n' + errB.message)
+      return
+    }
 
+    setConfirmSend(false)
     navigate('/semaine-type')
   }
 
@@ -414,12 +428,54 @@ export default function ReplacementPage() {
                   <span className="w-4 h-4 rounded-full bg-slate-200 text-slate-600 text-[10px] font-black flex items-center justify-center shrink-0">?</span>
                   {showExplain ? 'Masquer' : 'Comment c\'est calculé ?'}
                 </button>
-                <button onClick={sendToSemaineType}
+                <button onClick={() => setConfirmSend(true)}
                   className="px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-xl hover:bg-emerald-700 transition-colors shadow-sm">
                   Envoyer vers Semaine Type →
                 </button>
               </div>
             </div>
+
+            {/* Confirmation avant écrasement des cibles Semaine Type */}
+            {confirmSend && (
+              <div className="px-6 py-4 bg-amber-50 border-b border-amber-100">
+                <p className="text-sm font-semibold text-amber-800 mb-1">
+                  Confirmer l'envoi vers Semaine Type — {currentYear} ?
+                </p>
+                <p className="text-xs text-amber-700 mb-3">
+                  Les cibles existantes de {results.length} employé{results.length > 1 ? 's' : ''} pour l'année {currentYear} vont être remplacées par les valeurs ci-dessous.
+                </p>
+                <div className="mb-3 max-h-40 overflow-y-auto rounded-lg border border-amber-200 bg-white">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-amber-600 border-b border-amber-100">
+                        <th className="text-left px-3 py-1.5 font-semibold">Employé</th>
+                        <th className="text-right px-3 py-1.5 font-semibold">Sem. A</th>
+                        <th className="text-right px-3 py-1.5 font-semibold">Sem. B</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.map(r => (
+                        <tr key={r.id} className="border-b border-amber-50 last:border-0">
+                          <td className="px-3 py-1.5 text-slate-700">{r.name}</td>
+                          <td className="px-3 py-1.5 text-right text-slate-700">{fmtMinutes(r.semA)}</td>
+                          <td className="px-3 py-1.5 text-right text-slate-700">{fmtMinutes(r.semB)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={sendToSemaineType} disabled={sending}
+                    className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50">
+                    {sending ? 'Envoi…' : 'Confirmer le remplacement'}
+                  </button>
+                  <button onClick={() => setConfirmSend(false)} disabled={sending}
+                    className="px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 rounded-lg transition-colors">
+                    Annuler
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Avertissement si périmé */}
             {stale && (

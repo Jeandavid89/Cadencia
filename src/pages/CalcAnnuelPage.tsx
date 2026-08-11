@@ -83,9 +83,9 @@ export default function CalcAnnuelPage() {
       supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
     ])
 
-    const hasSixthWeek: boolean = (co as any)?.sixth_week ?? false
+    const hasSixthWeek: boolean = (co)?.sixth_week ?? false
     setSixthWeek(hasSixthWeek)
-    const refStr = (co as any)?.reference_week_date as string | null
+    const refStr = (co)?.reference_week_date as string | null
     const refMonday = refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year)
 
     if (!emps) { setLoaded(true); return }
@@ -102,7 +102,7 @@ export default function CalcAnnuelPage() {
     const lissageMap: Record<string, LissageEntry> = {}
     if (lissageSaved) {
       try {
-        const arr = JSON.parse(lissageSaved) as any[]
+        const arr = JSON.parse(lissageSaved) as { id: string; sixthWkMin?: number; normalWeeks?: number }[]
         for (const r of arr) lissageMap[r.id] = { id: r.id, sixthWkMin: r.sixthWkMin ?? 0, normalWeeks: r.normalWeeks ?? 0 }
       } catch { /* ignore */ }
     }

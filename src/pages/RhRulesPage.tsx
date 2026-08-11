@@ -40,11 +40,11 @@ export default function RhRulesPage() {
       supabase.from('companies').select('reference_week_date,sixth_week,team_validated_at').eq('id', companyId).single(),
       supabase.from('employees').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('active', true),
     ])
-    let ref = (co as any)?.reference_week_date as string | null
+    let ref = (co)?.reference_week_date as string | null
     if (!ref) ref = toDateStr(defaultRefMonday(currentYear))
     setRefDate(ref)
-    setSixthWeek((co as any)?.sixth_week ?? false)
-    setTeamValidatedAt((co as any)?.team_validated_at ?? null)
+    setSixthWeek((co)?.sixth_week ?? false)
+    setTeamValidatedAt((co)?.team_validated_at ?? null)
     setEmployeeCount(count ?? 0)
     setLoaded(true)
   }
@@ -63,13 +63,15 @@ export default function RhRulesPage() {
     const mondayStr = toDateStr(mon)
     setRefDate(mondayStr)
     setSaving(true)
-    await supabase.from('companies').update({ reference_week_date: mondayStr }).eq('id', companyId)
+    const { error } = await supabase.from('companies').update({ reference_week_date: mondayStr }).eq('id', companyId)
     setSaving(false)
+    if (error) alert('Erreur lors de l\'enregistrement de la semaine de référence : ' + error.message)
   }
 
   async function toggleSixthWeek(val: boolean) {
     setSixthWeek(val)
-    await supabase.from('companies').update({ sixth_week: val }).eq('id', companyId)
+    const { error } = await supabase.from('companies').update({ sixth_week: val }).eq('id', companyId)
+    if (error) alert('Erreur lors de l\'enregistrement de la 6e semaine : ' + error.message)
   }
 
   if (!loaded) return (

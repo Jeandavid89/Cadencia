@@ -1,9 +1,5 @@
 import { supabase } from './supabase'
-import { getWeekType, defaultRefMonday, getMondayOf } from './weekUtils'
-
-function toDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+import { getWeekType, defaultRefMonday, getMondayOf, toDateStr } from './weekUtils'
 
 const eff = (s: number, e: number, b: number) => Math.max(0, e - s - b)
 
@@ -22,7 +18,7 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
 
   if (!emps || emps.length === 0) return {}
 
-  const refStr = (coData as any)?.reference_week_date as string | null
+  const refStr = (coData)?.reference_week_date as string | null
   const ref = refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year)
 
   const semSlots = (stSlots ?? []) as { employee_id: string; week_type: 'A' | 'B'; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
@@ -48,7 +44,7 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
 
   // Semaines d'absence par employé
   const absentWeeksByEmp: Record<string, Set<string>> = {}
-  for (const emp of emps as any[]) absentWeeksByEmp[emp.id] = new Set()
+  for (const emp of emps) absentWeeksByEmp[emp.id] = new Set()
   for (const ls of lSlots.filter(s => s.slot_type === 'leave_week'))
     absentWeeksByEmp[ls.employee_id]?.add(toDateStr(getMondayOf(new Date(ls.date + 'T12:00:00'))))
 
@@ -67,7 +63,7 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
 
   const result: Record<string, number> = {}
 
-  for (const emp of emps as any[]) {
+  for (const emp of emps) {
     const effectiveContract = emp.contract_minutes_per_week - emp.formation_minutes_per_week
     const cible = (T - emp.leave_weeks_per_year) * effectiveContract
 
@@ -84,7 +80,7 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
       const monKey = toDateStr(weekMon)
       const weekType = getWeekType(weekMon, ref)
       if (absentWeekMondays.has(monKey)) continue
-      const absentColleagues = (emps as any[]).filter((o: any) => o.id !== emp.id && absentWeeksByEmp[o.id]?.has(monKey))
+      const absentColleagues = (emps).filter((o: any) => o.id !== emp.id && absentWeeksByEmp[o.id]?.has(monKey))
       let weekIsRepl = false
       for (let offset = 0; offset <= 4; offset++) {
         const day = new Date(weekMon); day.setDate(weekMon.getDate() + offset)

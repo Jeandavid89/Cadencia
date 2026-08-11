@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import WeekPlanner, { EMP_COLORS, eff, type PlannerSlot, type PlannerEmployee } from '../components/WeekPlanner'
-import { getWeekType, defaultRefMonday } from '../lib/weekUtils'
+import { getWeekType, defaultRefMonday, toDateStr } from '../lib/weekUtils'
 
 function getISOWeek(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -20,9 +20,6 @@ function getMondayOf(date: Date): Date {
   return d
 }
 
-function toDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
 
 interface Employee {
   id: string; first_name: string; last_name: string
@@ -77,7 +74,7 @@ export default function SemaineTypePage() {
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
       supabase.from('companies').select('reference_week_date').eq('id', companyId).single(),
     ])
-    const refStr = (co as any)?.reference_week_date as string | null
+    const refStr = (co)?.reference_week_date as string | null
     const ref = refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year)
     setRefMonday(ref)
     // Déterminer si sem A = ISO paires ou impaires pour cette année
@@ -246,7 +243,7 @@ export default function SemaineTypePage() {
 
       if (rows.length > 0) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: insErr } = await supabase.from('planning_slots').insert(rows as any[])
+        const { error: insErr } = await supabase.from('planning_slots').insert(rows )
         if (insErr) {
           setProjecting(false)
           alert(`Erreur semaine du ${weekMonStr} (insertion) : ${insErr.message}`)

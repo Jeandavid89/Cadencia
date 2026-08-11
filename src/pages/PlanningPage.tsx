@@ -5,7 +5,7 @@ import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import WeekPlanner, { EMP_COLORS, eff, type PlannerSlot, type PlannerEmployee, type DayOverlay, type LeavePartialSlot } from '../components/WeekPlanner'
 import ExportPanel from '../components/ExportPanel'
-import { getWeekType, defaultRefMonday } from '../lib/weekUtils'
+import { getWeekType, defaultRefMonday, toDateStr } from '../lib/weekUtils'
 
 // ─── helpers ISO week ───
 function getISOWeek(date: Date): number {
@@ -24,9 +24,6 @@ function getMondayOf(date: Date): Date {
 }
 
 function addDays(d: Date, n: number): Date { const r = new Date(d); r.setDate(r.getDate() + n); return r }
-function toDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
 function fmtWeekRange(mon: Date): string {
   const fri = addDays(mon, 4)
   const fmt = (d: Date) => `${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')}`
@@ -95,7 +92,7 @@ export default function PlanningPage() {
         supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes').eq('company_id', companyId),
         supabase.from('companies').select('reference_week_date').eq('id', companyId).single(),
       ])
-      const refStr = (co as any)?.reference_week_date as string | null
+      const refStr = (co)?.reference_week_date as string | null
       setRefMonday(refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year))
       if (tgts) setTargets(tgts)
       if (hols) setHolidays(hols)
@@ -418,8 +415,8 @@ export default function PlanningPage() {
       supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
     ])
     if (!emps) { setBilanLoading(false); return }
-    const hasSixthWeek: boolean = (coData as any)?.sixth_week ?? false
-    const refStr = (coData as any)?.reference_week_date as string | null
+    const hasSixthWeek: boolean = (coData)?.sixth_week ?? false
+    const refStr = (coData)?.reference_week_date as string | null
     const ref = refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year)
     const holSet = new Set(((hols ?? []) as { date: string }[]).map(h => h.date))
     const semSlots = (stSlots ?? []) as { employee_id: string; week_type: 'A'|'B'; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
@@ -428,7 +425,12 @@ export default function PlanningPage() {
     const carryArr = (carries ?? []) as { employee_id: string; carryover_minutes: number }[]
     const lissageSaved = localStorage.getItem(`lissage_${companyId}`)
     const lissageMap: Record<string, { sixthWkMin: number; normalWeeks: number }> = {}
-    if (lissageSaved) { try { (JSON.parse(lissageSaved) as any[]).forEach(r => { lissageMap[r.id] = { sixthWkMin: r.sixthWkMin ?? 0, normalWeeks: r.normalWeeks ?? 0 } }) } catch {} }
+    if (lissageSaved) {
+      try {
+        const parsed = JSON.parse(lissageSaved) as { id: string; sixthWkMin?: number; normalWeeks?: number }[]
+        parsed.forEach(r => { lissageMap[r.id] = { sixthWkMin: r.sixthWkMin ?? 0, normalWeeks: r.normalWeeks ?? 0 } })
+      } catch {}
+    }
     const weekMondays: Date[] = []
     { const seen = new Set<number>(); const d = new Date(from + 'T00:00:00'); const end = new Date(to + 'T00:00:00')
       while (d <= end) { const dow = d.getDay(); if (dow >= 1 && dow <= 5) { const mon = getMondayOf(new Date(d)); if (!seen.has(mon.getTime())) { seen.add(mon.getTime()); weekMondays.push(new Date(mon)) } } d.setDate(d.getDate() + 1) } }
@@ -438,7 +440,7 @@ export default function PlanningPage() {
     for (const ls of lSlots.filter(s => s.slot_type === 'leave_week'))
       absentWeeksByEmp[ls.employee_id]?.add(toDateStr(getMondayOf(new Date(ls.date + 'T12:00:00'))))
     const effMin = (s: number, e: number, b: number) => Math.max(0, e - s - b)
-    const rows: BilanRow[] = (emps as any[]).map((emp, i) => {
+    const rows: BilanRow[] = (emps).map((emp, i) => {
       const effectiveContract = emp.contract_minutes_per_week - emp.formation_minutes_per_week
       const effectiveLeave = emp.leave_weeks_per_year
       const cible = (T - effectiveLeave) * effectiveContract

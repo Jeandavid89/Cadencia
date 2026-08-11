@@ -84,8 +84,8 @@ export default function CongesPage() {
     setLeaveSlots((ls ?? []) as LeaveSlot[])
     setSemSlots((ss ?? []) as SemaineTypeSlot[])
     setHolidays((hols ?? []) as PublicHoliday[])
-    setSixthWeek((co as any)?.sixth_week ?? false)
-    const refStr = (co as any)?.reference_week_date as string | null
+    setSixthWeek((co)?.sixth_week ?? false)
+    const refStr = (co)?.reference_week_date as string | null
     setRefMonday(refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year))
     const lissageSaved = localStorage.getItem(`lissage_${companyId}`)
     if (lissageSaved) {
