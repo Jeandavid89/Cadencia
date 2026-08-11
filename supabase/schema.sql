@@ -182,6 +182,7 @@ create table annual_carryover (
   employee_id   uuid not null references employees(id) on delete cascade,
   year          integer not null,
   carryover_minutes integer not null default 0,  -- positif = heures en avance, négatif = heures en retard
+  carryover_leave_minutes integer not null default 0,  -- congés non pris reportés (Prompt 4, migration 004)
   unique(employee_id, year)
 );
 

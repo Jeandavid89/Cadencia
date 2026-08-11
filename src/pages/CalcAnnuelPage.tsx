@@ -19,8 +19,9 @@ interface Row {
   simulatedMin: number   // heures simulées (sem type + remplacement, hors congés)
   holidayMin: number     // fériés tombant sur jours travaillés
   formationMin: number   // formation dans les heures simulées
-  solde: number          // simulatedMin - cible (fériés hors solde)
+  solde: number          // simulatedMin - cible + report N-1 (fériés hors solde)
   carryover: number
+  carryoverLeave: number
   sixthWkMin: number
   droitConge: number
   leaveMin: number       // congés décomptés (sem type - cap)
@@ -48,7 +49,7 @@ interface ReplacementSlot {
   day_of_week: number; start_minutes: number; end_minutes: number
   break_minutes: number; is_formation: boolean
 }
-interface Carryover { employee_id: string; carryover_minutes: number }
+interface Carryover { employee_id: string; carryover_minutes: number; carryover_leave_minutes: number }
 
 const fullName = (e: Employee) => `${e.first_name} ${e.last_name}`.trim() || 'Sans nom'
 const eff = (start: number, end: number, brk: number) => Math.max(0, end - start - brk)
@@ -64,24 +65,71 @@ export default function CalcAnnuelPage() {
   const [sixthWeek, setSixthWeek] = useState(false)
   const [weekCount, setWeekCount] = useState<number | null>(null)
   const [weekRange, setWeekRange] = useState<{ first: Date; last: Date } | null>(null)
+  const [closedForYear, setClosedForYear] = useState(false)
+  const [closeStep, setCloseStep] = useState<'idle' | 'confirm' | 'done'>('idle')
+  const [closing, setClosing] = useState(false)
+  const [confirmUnclose, setConfirmUnclose] = useState(false)
+  const [unclosing, setUnclosing] = useState(false)
+  const [prevYearOpen, setPrevYearOpen] = useState(false) // bannière rappel
 
   useEffect(() => { if (companyId) load() }, [companyId, year])
+
+  // Bannière de rappel : année précédente non clôturée, visible tôt dans l'année
+  useEffect(() => {
+    if (!companyId) return
+    const now = new Date()
+    if (now.getFullYear() !== year || now.getMonth() > 2) { setPrevYearOpen(false); return } // fenêtre jan-mars
+    supabase.from('annual_carryover').select('employee_id').eq('company_id', companyId).eq('year', year - 1)
+      .then(({ data }) => setPrevYearOpen(!data || data.length === 0))
+  }, [companyId, year])
+
+  async function closeYear() {
+    setClosing(true)
+    // r.solde et r.soldeConge sont déjà cumulatifs (ils incluent le report
+    // entrant de l'année précédente) : ce qu'on archive ici est le solde de
+    // fin d'année N, qui devient le report entrant de l'année N+1.
+    const rowsToClose = rows.map(r => ({
+      company_id: companyId,
+      employee_id: r.emp.id,
+      year,
+      carryover_minutes: Math.round(r.solde),
+      carryover_leave_minutes: Math.round(r.soldeConge),
+    }))
+    const { error } = await supabase.from('annual_carryover').upsert(rowsToClose, { onConflict: 'employee_id,year' })
+    setClosing(false)
+    if (error) { alert('Erreur lors de la clôture : ' + error.message); return }
+    setClosedForYear(true)
+    setCloseStep('done')
+  }
+
+  async function uncloseYear() {
+    setUnclosing(true)
+    const { error } = await supabase.from('annual_carryover').delete().eq('company_id', companyId).eq('year', year)
+    setUnclosing(false)
+    if (error) { alert('Erreur lors de l\'annulation : ' + error.message); return }
+    setClosedForYear(false)
+    setConfirmUnclose(false)
+    setCloseStep('idle')
+    load()
+  }
 
   async function load() {
     setLoaded(false)
     const from = `${year}-01-01`
     const to = `${year}-12-31`
 
-    const [{ data: emps }, { data: hols }, { data: stSlots }, { data: leaveSlotsRaw }, { data: replSlotsRaw }, { data: carryovers }, { data: co }, { data: capRows }] = await Promise.all([
+    const [{ data: emps }, { data: hols }, { data: stSlots }, { data: leaveSlotsRaw }, { data: replSlotsRaw }, { data: carryovers }, { data: co }, { data: capRows }, { data: ownClosure }] = await Promise.all([
       supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year').eq('company_id', companyId).eq('active', true).order('sort_order'),
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
       supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
       supabase.from('planning_slots').select('employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_week', 'leave_day', 'leave_partial']),
       supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
-      supabase.from('annual_carryover').select('employee_id,carryover_minutes').eq('company_id', companyId).eq('year', year - 1),
+      supabase.from('annual_carryover').select('employee_id,carryover_minutes,carryover_leave_minutes').eq('company_id', companyId).eq('year', year - 1),
       supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
       supabase.from('week_targets').select('employee_id,sixth_week_cap_min').eq('company_id', companyId).eq('year', year),
+      supabase.from('annual_carryover').select('employee_id').eq('company_id', companyId).eq('year', year),
     ])
+    setClosedForYear((ownClosure ?? []).length > 0)
 
     const hasSixthWeek: boolean = (co)?.sixth_week ?? false
     setSixthWeek(hasSixthWeek)
@@ -249,7 +297,10 @@ export default function CalcAnnuelPage() {
         }
       }
 
-      const solde = simulatedMin - cible
+      const cEntry = carries.find(c => c.employee_id === emp.id)
+      const carryover = cEntry?.carryover_minutes ?? 0
+      const carryoverLeave = cEntry?.carryover_leave_minutes ?? 0
+      const solde = simulatedMin - cible + carryover
 
       const replByAbsentArr = Object.entries(replByAbsent)
         .map(([absentId, data]) => {
@@ -257,8 +308,6 @@ export default function CalcAnnuelPage() {
           return { absentId, absentName: found ? fullName(found) : '?', weeks: data.weeks.size, totalMin: data.totalMin }
         })
         .sort((a, b) => b.weeks - a.weeks)
-
-      const carryover = carries.find(c => c.employee_id === emp.id)?.carryover_minutes ?? 0
 
       // Congés payés : décompte basé sur semaine type − cap (pour CongesPage)
       const cap = capMap[emp.id] ?? 0
@@ -297,7 +346,7 @@ export default function CalcAnnuelPage() {
 
       const effectifHebdo = emp.contract_minutes_per_week - emp.formation_minutes_per_week
       const sixthWkMin = hasSixthWeek ? effectifHebdo : 0
-      const droitConge = effectifHebdo * emp.leave_weeks_per_year + sixthWkMin
+      const droitConge = effectifHebdo * emp.leave_weeks_per_year + sixthWkMin + carryoverLeave
       const soldeConge = droitConge - leaveMin
 
       const semATotal = semSlots.filter(s => s.employee_id === emp.id && s.week_type === 'A' && !s.is_formation && s.start_minutes != null && s.end_minutes != null).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes ?? 0), 0)
@@ -307,7 +356,7 @@ export default function CalcAnnuelPage() {
         ? soldeLiveMap[emp.id]
         : null
 
-      return { emp, T, effectiveLeave, cible, simulatedMin, holidayMin, formationMin, solde, carryover, sixthWkMin, droitConge, leaveMin, soldeConge, semATotal, semBTotal, replWeeksCount, replSimMin, normalWeeksCount, normalSimMin, normalWeeksCountA, normalSimMinA, normalWeeksCountB, normalSimMinB, replByAbsent: replByAbsentArr, soldeLive }
+      return { emp, T, effectiveLeave, cible, simulatedMin, holidayMin, formationMin, solde, carryover, carryoverLeave, sixthWkMin, droitConge, leaveMin, soldeConge, semATotal, semBTotal, replWeeksCount, replSimMin, normalWeeksCount, normalSimMin, normalWeeksCountA, normalSimMinA, normalWeeksCountB, normalSimMinB, replByAbsent: replByAbsentArr, soldeLive }
     })
 
     setRows(result)
@@ -341,12 +390,43 @@ export default function CalcAnnuelPage() {
       </div>
 
       <div className="p-8 max-w-6xl space-y-5">
+        {prevYearOpen && (
+          <div className="px-4 py-3 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center justify-between gap-3">
+            <p className="text-xs text-indigo-700">L'année {year - 1} n'a pas encore été clôturée — les soldes ne seront pas reportés sur {year} tant que ce n'est pas fait.</p>
+            <button onClick={() => setYear(year - 1)} className="shrink-0 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 transition-colors">
+              Aller à {year - 1}
+            </button>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2">
             <button onClick={() => setYear(y => y - 1)} className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-400 text-sm transition-colors">←</button>
             <h2 className="text-3xl font-extrabold text-slate-800">{year}</h2>
             <button onClick={() => setYear(y => y + 1)} className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-400 text-sm transition-colors">→</button>
           </div>
+          {closedForYear ? (
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                Année {year} clôturée
+              </span>
+              <button onClick={() => setConfirmUnclose(true)}
+                className="text-xs text-slate-400 hover:text-red-500 underline transition-colors">
+                Annuler
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setCloseStep('confirm')}
+              className="px-3 py-1.5 text-xs font-semibold border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors">
+              Clôturer l'année {year}
+            </button>
+          )}
+          {hasCarryover && (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-indigo-500 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-full" title={`Report de ${year - 1} inclus dans les soldes ci-dessous`}>
+              ↩ Report {year - 1} inclus
+            </span>
+          )}
           {weekCount !== null && weekRange && (
             <div className="flex items-center gap-2 text-sm text-slate-400">
               <span className="font-bold text-slate-700">{weekCount}</span>
@@ -427,7 +507,16 @@ export default function CalcAnnuelPage() {
                       <Td className="text-right text-slate-600">{fmtMinutes(r.cible)}</Td>
                       {(() => { const s = theoryNormal + totalRepl - r.cible; const cls = s > 0 ? 'text-amber-600 font-bold' : s < 0 ? 'text-blue-600 font-bold' : 'text-emerald-600 font-bold'; return <Td className={`text-right ${cls}`}>{s >= 0 ? '+' : '−'}{fmtMinutes(Math.abs(s))}</Td> })()}
                       {r.soldeLive !== null
-                        ? (() => { const s = r.soldeLive!; const cls = s > 0 ? 'text-amber-600 font-bold' : s < 0 ? 'text-blue-600 font-bold' : 'text-emerald-600 font-bold'; return <Td className={`text-right ${cls} bg-amber-100/60`}>{s >= 0 ? '+' : '−'}{fmtMinutes(Math.abs(s))}</Td> })()
+                        ? (() => { const s = r.soldeLive!; const cls = s > 0 ? 'text-amber-600 font-bold' : s < 0 ? 'text-blue-600 font-bold' : 'text-emerald-600 font-bold'; return (
+                            <Td className={`text-right ${cls} bg-amber-100/60`}>
+                              {s >= 0 ? '+' : '−'}{fmtMinutes(Math.abs(s))}
+                              {r.carryover !== 0 && (
+                                <div className="text-[9px] font-normal text-indigo-500" title={`Dont report ${year - 1} : ${r.carryover >= 0 ? '+' : '−'}${fmtMinutes(Math.abs(r.carryover))}`}>
+                                  dont report {year - 1}
+                                </div>
+                              )}
+                            </Td>
+                          ) })()
                         : <Td className="text-right text-slate-300 bg-amber-100/60">—</Td>
                       }
                     </tr>
@@ -462,7 +551,14 @@ export default function CalcAnnuelPage() {
                         sub={`${r.emp.leave_weeks_per_year} sem. légales${sixthWeek ? ' + 6ème' : ''}`} />
                       <Td className="text-right text-slate-500">{fmtMinutes((r.emp.contract_minutes_per_week - r.emp.formation_minutes_per_week) * r.emp.leave_weeks_per_year)}</Td>
                       {sixthWeek && <Td className="text-right text-indigo-500 font-semibold">+{fmtMinutes(r.sixthWkMin)}</Td>}
-                      <Td className="text-right font-semibold text-slate-700">{fmtMinutes(r.droitConge)}</Td>
+                      <Td className="text-right font-semibold text-slate-700">
+                        {fmtMinutes(r.droitConge)}
+                        {r.carryoverLeave !== 0 && (
+                          <div className="text-[9px] font-normal text-indigo-500" title={`Dont report ${year - 1} : ${r.carryoverLeave >= 0 ? '+' : '−'}${fmtMinutes(Math.abs(r.carryoverLeave))}`}>
+                            dont report {year - 1}
+                          </div>
+                        )}
+                      </Td>
                       <Td className="text-right text-blue-600 font-semibold">{r.leaveMin > 0 ? fmtMinutes(r.leaveMin) : '—'}</Td>
                       <Td className={`text-right font-bold ${sc.cls}`}>{sc.text}</Td>
                     </tr>
@@ -474,6 +570,83 @@ export default function CalcAnnuelPage() {
 
         </>)}
       </div>
+
+      {closeStep === 'confirm' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-lg w-full">
+            <h3 className="font-bold text-slate-900 text-base mb-1">Clôturer l'année {year} ?</h3>
+            <p className="text-sm text-slate-500 mb-1">
+              {closedForYear
+                ? <>L'année {year} a déjà été clôturée. Relancer <strong>recalcule et remplace</strong> le report archivé.</>
+                : <>Les soldes ci-dessous seront archivés et deviendront le report de départ de {year + 1}.</>}
+            </p>
+            {rows.some(r => r.T === 0) && (
+              <p className="text-xs text-amber-600 mb-1">⚠ Certaines employées n'ont aucune donnée de planning pour {year} — vérifiez avant de continuer.</p>
+            )}
+            <div className="my-4 max-h-56 overflow-y-auto rounded-lg border border-slate-200">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-slate-400 bg-slate-50 border-b border-slate-200">
+                    <th className="text-left px-3 py-1.5 font-semibold">Employée</th>
+                    <th className="text-right px-3 py-1.5 font-semibold">Solde heures</th>
+                    <th className="text-right px-3 py-1.5 font-semibold">Congés restants</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => (
+                    <tr key={r.emp.id} className="border-b border-slate-50 last:border-0">
+                      <td className="px-3 py-1.5 text-slate-700">{fullName(r.emp)}</td>
+                      <td className={`px-3 py-1.5 text-right font-semibold ${r.solde >= 0 ? 'text-amber-600' : 'text-blue-600'}`}>{r.solde >= 0 ? '+' : '−'}{fmtMinutes(Math.abs(r.solde))}</td>
+                      <td className={`px-3 py-1.5 text-right font-semibold ${r.soldeConge >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{r.soldeConge >= 0 ? '+' : '−'}{fmtMinutes(Math.abs(r.soldeConge))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setCloseStep('idle')} disabled={closing}
+                className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
+                Annuler
+              </button>
+              <button onClick={closeYear} disabled={closing}
+                className="px-4 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50">
+                {closing ? 'Clôture…' : `Confirmer la clôture de ${year}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {closeStep === 'done' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
+            <h3 className="font-bold text-emerald-700 text-base mb-2">✓ Année {year} clôturée</h3>
+            <p className="text-sm text-slate-500 mb-4">Les soldes ont été archivés. L'année {year + 1} démarrera avec ces reports appliqués.</p>
+            <button onClick={() => setCloseStep('idle')} className="w-full px-4 py-2 text-sm font-medium bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors">
+              Fermer
+            </button>
+          </div>
+        </div>
+      )}
+
+      {confirmUnclose && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
+            <h3 className="font-bold text-slate-900 text-base mb-2">Annuler la clôture de {year} ?</h3>
+            <p className="text-sm text-slate-500 mb-4">Le report archivé pour {year} sera supprimé. L'année {year + 1} ne recevra plus ce report tant que {year} n'est pas re-clôturée.</p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setConfirmUnclose(false)} disabled={unclosing}
+                className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
+                Retour
+              </button>
+              <button onClick={uncloseYear} disabled={unclosing}
+                className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50">
+                {unclosing ? 'Suppression…' : 'Annuler la clôture'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

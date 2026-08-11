@@ -411,7 +411,7 @@ export default function PlanningPage() {
       supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
       supabase.from('planning_slots').select('employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_week','leave_day','leave_partial']),
       supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
-      supabase.from('annual_carryover').select('employee_id,carryover_minutes').eq('company_id', companyId).eq('year', year - 1),
+      supabase.from('annual_carryover').select('employee_id,carryover_minutes,carryover_leave_minutes').eq('company_id', companyId).eq('year', year - 1),
       supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
       supabase.from('week_targets').select('employee_id,sixth_week_cap_min').eq('company_id', companyId).eq('year', year),
     ])
@@ -423,7 +423,7 @@ export default function PlanningPage() {
     const semSlots = (stSlots ?? []) as { employee_id: string; week_type: 'A'|'B'; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
     const lSlots = (leaveSlots ?? []) as { employee_id: string; date: string; slot_type: string; start_minutes?: number | null; end_minutes?: number | null }[]
     const rSlots = (replSlotsData ?? []) as { absent_employee_id: string; present_employee_id: string; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
-    const carryArr = (carries ?? []) as { employee_id: string; carryover_minutes: number }[]
+    const carryArr = (carries ?? []) as { employee_id: string; carryover_minutes: number; carryover_leave_minutes: number }[]
     // Taux de cotisation 6e semaine - la base fait foi (Prompt 3, plus de
     // lecture localStorage ici, cf. migration douce dans ReplacementPage.tsx)
     const capMap: Record<string, number> = {}
@@ -471,7 +471,8 @@ export default function PlanningPage() {
       }
       const theoryNormal = normalWeeksCountA * semATotal + normalWeeksCountB * semBTotal
       const totalRepl = Object.values(replByAbsent).reduce((a, v) => a + v, 0)
-      const soldeHeures = theoryNormal + totalRepl - cible
+      const carry = carryArr.find(c => c.employee_id === emp.id)
+      const soldeHeures = theoryNormal + totalRepl - cible + (carry?.carryover_minutes ?? 0)
       const weekTypeTotalFn = (wt: 'A'|'B') => semSlots.filter(s => s.employee_id === emp.id && s.week_type === wt && !s.is_formation).reduce((a, s) => a + effMin(s.start_minutes, s.end_minutes, s.break_minutes), 0)
       const cap = capMap[emp.id] ?? 0
       let leaveMin = 0
@@ -497,7 +498,7 @@ export default function PlanningPage() {
         leaveMin += Math.max(0, ls.end_minutes - ls.start_minutes)
       }
       const sixthWkMin = hasSixthWeek ? effectiveContract : 0
-      const droitConge = effectiveContract * effectiveLeave + sixthWkMin
+      const droitConge = effectiveContract * effectiveLeave + sixthWkMin + (carry?.carryover_leave_minutes ?? 0)
       const soldeCongés = droitConge - leaveMin
       return { empId: emp.id, name: `${emp.first_name} ${emp.last_name}`.trim(), colorIdx: i, soldeHeures, soldeCongés }
     })

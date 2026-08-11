@@ -8,12 +8,13 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
   const from = `${year}-01-01`
   const to = `${year}-12-31`
 
-  const [{ data: emps }, { data: stSlots }, { data: leaveSlots }, { data: replSlotsData }, { data: coData }] = await Promise.all([
+  const [{ data: emps }, { data: stSlots }, { data: leaveSlots }, { data: replSlotsData }, { data: coData }, { data: carryData }] = await Promise.all([
     supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year').eq('company_id', companyId).eq('active', true).order('sort_order'),
     supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
     supabase.from('planning_slots').select('employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_week', 'leave_day', 'leave_partial']),
     supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
     supabase.from('companies').select('reference_week_date').eq('id', companyId).single(),
+    supabase.from('annual_carryover').select('employee_id,carryover_minutes').eq('company_id', companyId).eq('year', year - 1),
   ])
 
   if (!emps || emps.length === 0) return {}
@@ -24,6 +25,8 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
   const semSlots = (stSlots ?? []) as { employee_id: string; week_type: 'A' | 'B'; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
   const lSlots = (leaveSlots ?? []) as { employee_id: string; date: string; slot_type: string; start_minutes?: number | null; end_minutes?: number | null }[]
   const rSlots = (replSlotsData ?? []) as { absent_employee_id: string; present_employee_id: string; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
+  const carryMap: Record<string, number> = {}
+  for (const c of (carryData ?? []) as { employee_id: string; carryover_minutes: number }[]) carryMap[c.employee_id] = c.carryover_minutes
 
   // Semaines de l'année
   const weekMondays: Date[] = []
@@ -117,7 +120,7 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
       weekSolde = actual - reference
     }
 
-    result[emp.id] = soldeHeures + weekSolde
+    result[emp.id] = soldeHeures + weekSolde + (carryMap[emp.id] ?? 0)
   }
 
   return result
