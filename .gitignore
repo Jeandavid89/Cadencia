@@ -12,6 +12,15 @@ dist
 dist-ssr
 *.local
 
+# Environnements (Prompt 6 - separation dev/prod) : contiennent les vraies
+# cles Supabase par environnement, ne jamais commiter. Seul .env.example
+# est versionne.
+.env
+.env.development
+.env.production
+.env.development.local
+.env.production.local
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
