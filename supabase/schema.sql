@@ -36,7 +36,8 @@ alter table companies enable row level security;
 
 create policy "company owner access"
   on companies for all
-  using (auth.uid() = id);
+  using (auth.uid() = id)
+  with check (auth.uid() = id);
 
 -- ============================================================
 -- EMPLOYEES
@@ -61,7 +62,8 @@ alter table employees enable row level security;
 
 create policy "company members only"
   on employees for all
-  using (company_id in (select id from companies where auth.uid() = companies.id));
+  using (company_id in (select id from companies where auth.uid() = companies.id))
+  with check (company_id in (select id from companies where auth.uid() = companies.id));
 
 -- ============================================================
 -- PUBLIC HOLIDAYS
@@ -79,7 +81,8 @@ alter table public_holidays enable row level security;
 
 create policy "company members only"
   on public_holidays for all
-  using (company_id in (select id from companies where auth.uid() = companies.id));
+  using (company_id in (select id from companies where auth.uid() = companies.id))
+  with check (company_id in (select id from companies where auth.uid() = companies.id));
 
 -- ============================================================
 -- WEEK TARGETS (cibles 2 semaines issues du lissage)
@@ -102,7 +105,8 @@ alter table week_targets enable row level security;
 
 create policy "company members only"
   on week_targets for all
-  using (company_id in (select id from companies where auth.uid() = companies.id));
+  using (company_id in (select id from companies where auth.uid() = companies.id))
+  with check (company_id in (select id from companies where auth.uid() = companies.id));
 
 -- ============================================================
 -- SEMAINE TYPE SLOTS
@@ -124,7 +128,8 @@ alter table semaine_type_slots enable row level security;
 
 create policy "company members only"
   on semaine_type_slots for all
-  using (company_id in (select id from companies where auth.uid() = companies.id));
+  using (company_id in (select id from companies where auth.uid() = companies.id))
+  with check (company_id in (select id from companies where auth.uid() = companies.id));
 
 -- ============================================================
 -- PLANNING SLOTS (agenda réel)
@@ -147,7 +152,8 @@ alter table planning_slots enable row level security;
 
 create policy "company members only"
   on planning_slots for all
-  using (company_id in (select id from companies where auth.uid() = companies.id));
+  using (company_id in (select id from companies where auth.uid() = companies.id))
+  with check (company_id in (select id from companies where auth.uid() = companies.id));
 
 -- ============================================================
 -- REPLACEMENT SLOTS (planning de remplacement pendant un congé)
@@ -171,7 +177,8 @@ alter table replacement_slots enable row level security;
 
 create policy "company members only"
   on replacement_slots for all
-  using (company_id in (select id from companies where auth.uid() = companies.id));
+  using (company_id in (select id from companies where auth.uid() = companies.id))
+  with check (company_id in (select id from companies where auth.uid() = companies.id));
 
 -- ============================================================
 -- ANNUAL CARRYOVER (report d'heures d'une année sur l'autre)
@@ -190,4 +197,5 @@ alter table annual_carryover enable row level security;
 
 create policy "company members only"
   on annual_carryover for all
-  using (company_id in (select id from companies where auth.uid() = companies.id));
+  using (company_id in (select id from companies where auth.uid() = companies.id))
+  with check (company_id in (select id from companies where auth.uid() = companies.id));
