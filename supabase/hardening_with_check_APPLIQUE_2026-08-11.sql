@@ -1,15 +1,14 @@
--- NE PAS EXECUTER SANS VALIDATION EXPLICITE.
+-- APPLIQUE le 2026-08-11 par Jd via le SQL Editor du dashboard Supabase.
+-- Verifie ensuite en lecture (pg_policies.with_check rempli sur les 8
+-- policies) - conserve ici pour tracabilite et pour un futur environnement
+-- de dev (Prompt 6).
+--
 -- Ajoute des clauses WITH CHECK identiques aux clauses USING existantes,
 -- sur les 8 policies "for all" du projet (point d'hygiene 17 de l'audit
--- du 10/08/2026). Comportement actuel deja sur, PostgreSQL utilise USING
+-- du 10/08/2026). Comportement inchange : PostgreSQL utilisait deja USING
 -- comme garde-fou implicite pour INSERT/UPDATE en l'absence de WITH CHECK
 -- - ce script rend cette protection explicite plutot que de dependre
 -- d'un comportement implicite.
---
--- Sans danger fonctionnel attendu (le comportement ne change pas), mais
--- reste une modification de policies RLS EN PRODUCTION : a executer
--- uniquement apres validation, une table a la fois si prudence maximale
--- souhaitee, dans le SQL Editor du dashboard Supabase.
 
 alter policy "company owner access" on companies
   with check (auth.uid() = id);
