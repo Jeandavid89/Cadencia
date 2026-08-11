@@ -62,9 +62,7 @@ export default function SemaineTypePage() {
   const stateRef = useRef({ A: slotsA, B: slotsB, employees, holidays })
   stateRef.current = { A: slotsA, B: slotsB, employees, holidays }
 
-  useEffect(() => { if (companyId) load() }, [companyId])
-
-  async function load() {
+  const load = useCallback(async () => {
     const year = new Date().getFullYear()
     const [{ data: emps }, { data: tgts }, { data: dbSlots }, { data: hols }, { data: co }] = await Promise.all([
       supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,color_index').eq('company_id', companyId).eq('active', true).order('sort_order'),
@@ -99,7 +97,9 @@ export default function SemaineTypePage() {
     }
     setCapMap(cm)
     setLoaded(true)
-  }
+  }, [companyId])
+
+  useEffect(() => { if (companyId) load() }, [companyId, load])
 
   const scheduleSave = useCallback((weekType: 'A' | 'B', slots: PlannerSlot[]) => {
     if (saveTimers.current[weekType]) clearTimeout(saveTimers.current[weekType]!)

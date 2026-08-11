@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { getMondayOf, toDateStr, getWeekType, countYearWeeks, defaultRefMonday } from '../lib/weekUtils'
@@ -33,9 +33,7 @@ export default function RhRulesPage() {
   const [employeeCount, setEmployeeCount] = useState(0)
   const [teamValidatedAt, setTeamValidatedAt] = useState<string | null>(null)
 
-  useEffect(() => { if (companyId) load() }, [companyId])
-
-  async function load() {
+  const load = useCallback(async () => {
     const [{ data: co }, { count }] = await Promise.all([
       supabase.from('companies').select('reference_week_date,sixth_week,team_validated_at').eq('id', companyId).single(),
       supabase.from('employees').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('active', true),
@@ -47,7 +45,9 @@ export default function RhRulesPage() {
     setTeamValidatedAt((co)?.team_validated_at ?? null)
     setEmployeeCount(count ?? 0)
     setLoaded(true)
-  }
+  }, [companyId, currentYear])
+
+  useEffect(() => { if (companyId) load() }, [companyId, load])
 
   useEffect(() => {
     if (!refDate) return
@@ -55,7 +55,7 @@ export default function RhRulesPage() {
     const rows: YearRow[] = []
     for (let y = currentYear - 1; y <= 2070; y++) rows.push(computeYearRow(y, refMonday))
     setYearRows(rows)
-  }, [refDate])
+  }, [refDate, currentYear])
 
   async function saveRefDate(val: string) {
     if (!val) return

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
@@ -72,8 +72,6 @@ export default function CalcAnnuelPage() {
   const [unclosing, setUnclosing] = useState(false)
   const [prevYearOpen, setPrevYearOpen] = useState(false) // bannière rappel
 
-  useEffect(() => { if (companyId) load() }, [companyId, year])
-
   // Bannière de rappel : année précédente non clôturée, visible tôt dans l'année
   useEffect(() => {
     if (!companyId) return
@@ -113,7 +111,7 @@ export default function CalcAnnuelPage() {
     load()
   }
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoaded(false)
     const from = `${year}-01-01`
     const to = `${year}-12-31`
@@ -345,7 +343,9 @@ export default function CalcAnnuelPage() {
 
     setRows(result)
     setLoaded(true)
-  }
+  }, [companyId, year])
+
+  useEffect(() => { if (companyId) load() }, [companyId, year, load])
 
   if (!loaded) return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin" /></div>
 

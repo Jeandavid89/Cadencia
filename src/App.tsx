@@ -20,7 +20,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const { hydrate } = useAuthStore()
-  useEffect(() => { hydrate() }, [])
+  useEffect(() => { hydrate() }, [hydrate])
 
   return (
     <BrowserRouter>

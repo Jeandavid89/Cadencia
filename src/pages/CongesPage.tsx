@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
@@ -67,9 +67,7 @@ export default function CongesPage() {
   const [deleting, setDeleting] = useState<string | null>(null)
   const [refMonday, setRefMonday] = useState<Date>(() => defaultRefMonday(new Date().getFullYear()))
 
-  useEffect(() => { if (companyId) load() }, [companyId, year])
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoaded(false)
     const from = `${year}-01-01`, to = `${year}-12-31`
     const [{ data: emps }, { data: ls }, { data: ss }, { data: hols }, { data: co }, { data: capRows }] = await Promise.all([
@@ -95,7 +93,9 @@ export default function CongesPage() {
     }
     setCapMap(cm)
     setLoaded(true)
-  }
+  }, [companyId, year])
+
+  useEffect(() => { if (companyId) load() }, [companyId, load])
 
   if (!loaded) return (
     <div className="flex items-center justify-center h-full">

@@ -118,13 +118,7 @@ export default function PlanningPage() {
     init()
   }, [companyId])
 
-  // Load week slots when weekStart changes
-  useEffect(() => {
-    if (!companyId || employees.length === 0) return
-    loadWeek()
-  }, [companyId, weekStart, employees.length])
-
-  async function loadWeek() {
+  const loadWeek = useCallback(async () => {
     setLoaded(false)
     const from = toDateStr(weekStart)
     const to = toDateStr(addDays(weekStart, 4))
@@ -134,7 +128,13 @@ export default function PlanningPage() {
       .gte('date', from).lte('date', to)
     setDbSlots((data as DBPlanningSlot[]) ?? [])
     setLoaded(true)
-  }
+  }, [companyId, weekStart])
+
+  // Load week slots when weekStart changes
+  useEffect(() => {
+    if (!companyId || employees.length === 0) return
+    loadWeek()
+  }, [companyId, weekStart, employees.length, loadWeek])
 
   // Congés horaires partiels
   const leavePartialSlots: LeavePartialSlot[] = dbSlots
@@ -222,7 +222,7 @@ export default function PlanningPage() {
         setSaving(false)
       }
     }, 800)
-  }, [companyId, weekStart, employees])
+  }, [companyId, weekStart])
 
   function handleSlotsChange(newSlots: PlannerSlot[]) {
     // Update local planner slots immediately (merge back with overrides)
