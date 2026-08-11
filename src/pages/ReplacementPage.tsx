@@ -46,6 +46,8 @@ export default function ReplacementPage() {
   const [showExplain, setShowExplain] = useState(false)
   const [confirmSend, setConfirmSend] = useState(false)
   const [sending, setSending] = useState(false)
+  const [needsCapSync, setNeedsCapSync] = useState(false)
+  const [syncingCap, setSyncingCap] = useState(false)
   const [results, setResults] = useState<{
     id: string; name: string; normal2w: number; replAnnual: number; sixthWkMin: number; normalWeeks: number; adjustPerCycle: number; semA: number; semB: number; semA_noSixth: number; semB_noSixth: number
   }[]>([])
@@ -108,6 +110,15 @@ export default function ReplacementPage() {
           if (Array.isArray(data) && data.length > 0 && typeof data[0].semA_noSixth === 'number') {
             setResults(data)
             setComputed(true)
+
+            // Migration douce (Prompt 3) : si la base n'a aucun taux de
+            // cotisation 6e semaine pour l'année en cours mais qu'un calcul
+            // existe sur cet appareil, proposer de le pousser en base.
+            const year = new Date().getFullYear()
+            const { data: existingCaps } = await supabase.from('week_targets')
+              .select('sixth_week_cap_min').eq('company_id', companyId).eq('year', year)
+              .not('sixth_week_cap_min', 'is', null)
+            if (!existingCaps || existingCaps.length === 0) setNeedsCapSync(true)
           }
         } catch { /* données corrompues, on ignore */ }
       }
@@ -115,6 +126,21 @@ export default function ReplacementPage() {
     }
     load()
   }, [companyId])
+
+  async function syncCapToDb() {
+    setSyncingCap(true)
+    const year = new Date().getFullYear()
+    const capRows = results.map(r => ({
+      company_id: companyId,
+      employee_id: r.id,
+      year,
+      sixth_week_cap_min: r.normalWeeks > 0 ? r.sixthWkMin / r.normalWeeks : 0,
+    }))
+    const { error } = await supabase.from('week_targets').upsert(capRows, { onConflict: 'employee_id,year' })
+    setSyncingCap(false)
+    if (error) { alert('Erreur lors de la synchronisation : ' + error.message); return }
+    setNeedsCapSync(false)
+  }
 
   function handleSlotsChange(absentId: string, newSlots: PlannerSlot[]) {
     setPlanSlots(p => ({ ...p, [absentId]: newSlots }))
@@ -163,7 +189,7 @@ export default function ReplacementPage() {
     return planSlots[absentId]?.filter(s => s.employee_id === presentId && s.is_formation).reduce((sum, s) => sum + slotEff(s), 0) ?? 0
   }
 
-  function compute() {
+  async function compute() {
     const res = employees.map(emp => {
       const effectivePerWeek = eff(emp)
       const normal2w = effectivePerWeek * 2
@@ -223,8 +249,23 @@ export default function ReplacementPage() {
     setResults(res)
     setComputed(true)
     setStale(false)
+    // localStorage : cache de confort seulement, la base fait foi (ci-dessous)
     localStorage.setItem(`lissage_${companyId}`, JSON.stringify(res))
     setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+
+    // Persiste le taux de cotisation 6e semaine en base immediatement (pas
+    // derriere la confirmation "Envoyer vers Semaine Type", qui concerne
+    // uniquement les cibles horaires - le cap conges doit etre a jour des
+    // le calcul, meme si l'admin n'envoie pas encore vers Semaine Type).
+    const year = new Date().getFullYear()
+    const capRows = res.map(r => ({
+      company_id: companyId,
+      employee_id: r.id,
+      year,
+      sixth_week_cap_min: r.normalWeeks > 0 ? r.sixthWkMin / r.normalWeeks : 0,
+    }))
+    const { error: capErr } = await supabase.from('week_targets').upsert(capRows, { onConflict: 'employee_id,year' })
+    if (capErr) alert('Le lissage est calculé, mais le taux de cotisation 6e semaine n\'a pas pu être enregistré en base (il reste disponible sur cet appareil) :\n' + capErr.message)
   }
 
   async function sendToSemaineType() {
@@ -303,6 +344,18 @@ export default function ReplacementPage() {
         </div>
         <p className="text-xs text-slate-400">Planifiez les semaines de remplacement, puis calculez les cibles de cycle</p>
       </div>
+
+      {needsCapSync && (
+        <div className="mx-8 mt-4 px-4 py-3 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center justify-between gap-3">
+          <p className="text-xs text-indigo-700">
+            Un calcul de lissage existe sur cet appareil mais n'est pas encore synchronisé en base — sur un autre appareil, les congés seraient décomptés sans le taux de cotisation 6e semaine tant que ce n'est pas fait.
+          </p>
+          <button onClick={syncCapToDb} disabled={syncingCap}
+            className="shrink-0 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50">
+            {syncingCap ? 'Synchronisation…' : 'Synchroniser maintenant'}
+          </button>
+        </div>
+      )}
 
       <div className="p-8 max-w-6xl space-y-6">
 

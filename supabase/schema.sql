@@ -93,6 +93,7 @@ create table week_targets (
   sem_b_minutes           integer not null default 0,
   sem_a_no_sixth_minutes  integer,  -- cible sans la 6e semaine (ReplacementPage)
   sem_b_no_sixth_minutes  integer,
+  sixth_week_cap_min      numeric,  -- taux hebdo cotisation 6e semaine (Prompt 3, migration 003)
   updated_at              timestamptz not null default now(),
   unique(employee_id, year)
 );

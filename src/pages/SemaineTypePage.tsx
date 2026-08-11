@@ -27,7 +27,6 @@ interface Employee {
   color_index: number | null
 }
 interface WeekTarget { employee_id: string; sem_a_minutes: number; sem_b_minutes: number }
-interface LissageEntry { id: string; sixthWkMin: number; normalWeeks: number }
 interface DBSlot {
   id: string; employee_id: string; week_type: 'A' | 'B'
   day_of_week: number; start_minutes: number; end_minutes: number
@@ -45,7 +44,7 @@ export default function SemaineTypePage() {
 
   const [employees, setEmployees] = useState<Employee[]>([])
   const [targets, setTargets] = useState<WeekTarget[]>([])
-  const [lissageData, setLissageData] = useState<LissageEntry[]>([])
+  const [capMap, setCapMap] = useState<Record<string, number>>({})
   const [slotsA, setSlotsA] = useState<PlannerSlot[]>([])
   const [slotsB, setSlotsB] = useState<PlannerSlot[]>([])
   const [holidays, setHolidays] = useState<string[]>([])
@@ -69,7 +68,7 @@ export default function SemaineTypePage() {
     const year = new Date().getFullYear()
     const [{ data: emps }, { data: tgts }, { data: dbSlots }, { data: hols }, { data: co }] = await Promise.all([
       supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,color_index').eq('company_id', companyId).eq('active', true).order('sort_order'),
-      supabase.from('week_targets').select('employee_id,sem_a_minutes,sem_b_minutes').eq('company_id', companyId).eq('year', year),
+      supabase.from('week_targets').select('employee_id,sem_a_minutes,sem_b_minutes,sixth_week_cap_min').eq('company_id', companyId).eq('year', year),
       supabase.from('semaine_type_slots').select('id,employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
       supabase.from('companies').select('reference_week_date').eq('id', companyId).single(),
@@ -92,13 +91,13 @@ export default function SemaineTypePage() {
       setSlotsA(all.filter(s => s.week_type === 'A').map(dbToPlanner))
       setSlotsB(all.filter(s => s.week_type === 'B').map(dbToPlanner))
     }
-    const lissageSaved = localStorage.getItem(`lissage_${companyId}`)
-    if (lissageSaved) {
-      try {
-        const arr = JSON.parse(lissageSaved)
-        setLissageData(arr.map((r: any) => ({ id: r.id, sixthWkMin: r.sixthWkMin ?? 0, normalWeeks: r.normalWeeks ?? 0 })))
-      } catch { setLissageData([]) }
+    // Taux de cotisation 6e semaine - la base fait foi (Prompt 3, plus de
+    // lecture localStorage ici, cf. migration douce dans ReplacementPage.tsx)
+    const cm: Record<string, number> = {}
+    for (const r of (tgts ?? []) as { employee_id: string; sixth_week_cap_min?: number | null }[]) {
+      if (r.sixth_week_cap_min != null) cm[r.employee_id] = r.sixth_week_cap_min
     }
+    setCapMap(cm)
     setLoaded(true)
   }
 
@@ -447,7 +446,7 @@ export default function SemaineTypePage() {
         </div>
 
         {/* Référence décompte congés */}
-        {lissageData.length > 0 && (
+        {Object.keys(capMap).length > 0 && (
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 bg-amber-50/60">
               <p className="text-xs font-bold text-amber-700 uppercase tracking-widest">Référence décompte congés</p>
@@ -468,9 +467,8 @@ export default function SemaineTypePage() {
                 <tbody>
                   {employees.map((emp, i) => {
                     const c = EMP_COLORS[(emp.color_index ?? i) % EMP_COLORS.length]
-                    const lis = lissageData.find(r => r.id === emp.id)
-                    if (!lis) return null
-                    const cap = lis.normalWeeks > 0 ? lis.sixthWkMin / lis.normalWeeks : 0
+                    const cap = capMap[emp.id]
+                    if (cap == null) return null
                     const baseA = getActual(emp.id, 'A')
                     const baseB = getActual(emp.id, 'B')
                     const dedA = Math.max(0, baseA - cap)

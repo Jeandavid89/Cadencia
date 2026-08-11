@@ -405,7 +405,7 @@ export default function PlanningPage() {
     const year = new Date().getFullYear()
     const from = `${year}-01-01`
     const to = `${year}-12-31`
-    const [{ data: emps }, { data: hols }, { data: stSlots }, { data: leaveSlots }, { data: replSlotsData }, { data: carries }, { data: coData }] = await Promise.all([
+    const [{ data: emps }, { data: hols }, { data: stSlots }, { data: leaveSlots }, { data: replSlotsData }, { data: carries }, { data: coData }, { data: capRows }] = await Promise.all([
       supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year').eq('company_id', companyId).eq('active', true).order('sort_order'),
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
       supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
@@ -413,6 +413,7 @@ export default function PlanningPage() {
       supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
       supabase.from('annual_carryover').select('employee_id,carryover_minutes').eq('company_id', companyId).eq('year', year - 1),
       supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
+      supabase.from('week_targets').select('employee_id,sixth_week_cap_min').eq('company_id', companyId).eq('year', year),
     ])
     if (!emps) { setBilanLoading(false); return }
     const hasSixthWeek: boolean = (coData)?.sixth_week ?? false
@@ -423,13 +424,11 @@ export default function PlanningPage() {
     const lSlots = (leaveSlots ?? []) as { employee_id: string; date: string; slot_type: string; start_minutes?: number | null; end_minutes?: number | null }[]
     const rSlots = (replSlotsData ?? []) as { absent_employee_id: string; present_employee_id: string; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
     const carryArr = (carries ?? []) as { employee_id: string; carryover_minutes: number }[]
-    const lissageSaved = localStorage.getItem(`lissage_${companyId}`)
-    const lissageMap: Record<string, { sixthWkMin: number; normalWeeks: number }> = {}
-    if (lissageSaved) {
-      try {
-        const parsed = JSON.parse(lissageSaved) as { id: string; sixthWkMin?: number; normalWeeks?: number }[]
-        parsed.forEach(r => { lissageMap[r.id] = { sixthWkMin: r.sixthWkMin ?? 0, normalWeeks: r.normalWeeks ?? 0 } })
-      } catch {}
+    // Taux de cotisation 6e semaine - la base fait foi (Prompt 3, plus de
+    // lecture localStorage ici, cf. migration douce dans ReplacementPage.tsx)
+    const capMap: Record<string, number> = {}
+    for (const r of (capRows ?? []) as { employee_id: string; sixth_week_cap_min: number | null }[]) {
+      if (r.sixth_week_cap_min != null) capMap[r.employee_id] = r.sixth_week_cap_min
     }
     const weekMondays: Date[] = []
     { const seen = new Set<number>(); const d = new Date(from + 'T00:00:00'); const end = new Date(to + 'T00:00:00')
@@ -474,8 +473,7 @@ export default function PlanningPage() {
       const totalRepl = Object.values(replByAbsent).reduce((a, v) => a + v, 0)
       const soldeHeures = theoryNormal + totalRepl - cible
       const weekTypeTotalFn = (wt: 'A'|'B') => semSlots.filter(s => s.employee_id === emp.id && s.week_type === wt && !s.is_formation).reduce((a, s) => a + effMin(s.start_minutes, s.end_minutes, s.break_minutes), 0)
-      const lis = lissageMap[emp.id]
-      const cap = lis && lis.normalWeeks > 0 ? lis.sixthWkMin / lis.normalWeeks : 0
+      const cap = capMap[emp.id] ?? 0
       let leaveMin = 0
       const processed = new Set<string>()
       for (const ls of empLeaveSlots.filter(s => s.slot_type === 'leave_week')) {

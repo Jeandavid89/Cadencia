@@ -19,7 +19,6 @@ interface LeaveSlot {
   slot_type: 'leave_day' | 'leave_week' | 'leave_partial'
   start_minutes?: number | null; end_minutes?: number | null
 }
-interface LissageEntry { id: string; sixthWkMin: number; normalWeeks: number }
 interface PublicHoliday { date: string }
 interface LeaveEntry {
   key: string; type: 'week' | 'day' | 'partial'
@@ -63,7 +62,7 @@ export default function CongesPage() {
   const [semSlots, setSemSlots] = useState<SemaineTypeSlot[]>([])
   const [holidays, setHolidays] = useState<PublicHoliday[]>([])
   const [sixthWeek, setSixthWeek] = useState(false)
-  const [lissageData, setLissageData] = useState<LissageEntry[]>([])
+  const [capMap, setCapMap] = useState<Record<string, number>>({})
   const [loaded, setLoaded] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [refMonday, setRefMonday] = useState<Date>(() => defaultRefMonday(new Date().getFullYear()))
@@ -73,12 +72,13 @@ export default function CongesPage() {
   async function load() {
     setLoaded(false)
     const from = `${year}-01-01`, to = `${year}-12-31`
-    const [{ data: emps }, { data: ls }, { data: ss }, { data: hols }, { data: co }] = await Promise.all([
+    const [{ data: emps }, { data: ls }, { data: ss }, { data: hols }, { data: co }, { data: capRows }] = await Promise.all([
       supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year,color_index').eq('company_id', companyId).eq('active', true).order('sort_order'),
       supabase.from('planning_slots').select('id,employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_day', 'leave_week', 'leave_partial']),
       supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
       supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
+      supabase.from('week_targets').select('employee_id,sixth_week_cap_min').eq('company_id', companyId).eq('year', year),
     ])
     setEmployees((emps ?? []) as Employee[])
     setLeaveSlots((ls ?? []) as LeaveSlot[])
@@ -87,15 +87,13 @@ export default function CongesPage() {
     setSixthWeek((co)?.sixth_week ?? false)
     const refStr = (co)?.reference_week_date as string | null
     setRefMonday(refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year))
-    const lissageSaved = localStorage.getItem(`lissage_${companyId}`)
-    if (lissageSaved) {
-      try {
-        const arr = JSON.parse(lissageSaved)
-        setLissageData(arr.map((r: any) => ({ id: r.id, sixthWkMin: r.sixthWkMin ?? 0, normalWeeks: r.normalWeeks ?? 0 })))
-      } catch { setLissageData([]) }
-    } else {
-      setLissageData([])
+    // Taux de cotisation 6e semaine - la base fait foi (Prompt 3, plus de
+    // lecture localStorage ici, cf. migration douce dans ReplacementPage.tsx)
+    const cm: Record<string, number> = {}
+    for (const r of (capRows ?? []) as { employee_id: string; sixth_week_cap_min: number | null }[]) {
+      if (r.sixth_week_cap_min != null) cm[r.employee_id] = r.sixth_week_cap_min
     }
+    setCapMap(cm)
     setLoaded(true)
   }
 
@@ -126,9 +124,7 @@ export default function CongesPage() {
 
   // Capitalisation 6ème semaine répartie sur les semaines normales
   function weeklyCapitalisation(empId: string): number {
-    const r = lissageData.find(r => r.id === empId)
-    if (!r || r.normalWeeks === 0) return 0
-    return r.sixthWkMin / r.normalWeeks
+    return capMap[empId] ?? 0
   }
 
   // K = proportion du temps réel (hors cotisation 6ème semaine) pour un jour isolé

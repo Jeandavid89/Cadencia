@@ -49,7 +49,6 @@ interface ReplacementSlot {
   break_minutes: number; is_formation: boolean
 }
 interface Carryover { employee_id: string; carryover_minutes: number }
-interface LissageEntry { id: string; sixthWkMin: number; normalWeeks: number }
 
 const fullName = (e: Employee) => `${e.first_name} ${e.last_name}`.trim() || 'Sans nom'
 const eff = (start: number, end: number, brk: number) => Math.max(0, end - start - brk)
@@ -73,7 +72,7 @@ export default function CalcAnnuelPage() {
     const from = `${year}-01-01`
     const to = `${year}-12-31`
 
-    const [{ data: emps }, { data: hols }, { data: stSlots }, { data: leaveSlotsRaw }, { data: replSlotsRaw }, { data: carryovers }, { data: co }] = await Promise.all([
+    const [{ data: emps }, { data: hols }, { data: stSlots }, { data: leaveSlotsRaw }, { data: replSlotsRaw }, { data: carryovers }, { data: co }, { data: capRows }] = await Promise.all([
       supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year').eq('company_id', companyId).eq('active', true).order('sort_order'),
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
       supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
@@ -81,6 +80,7 @@ export default function CalcAnnuelPage() {
       supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
       supabase.from('annual_carryover').select('employee_id,carryover_minutes').eq('company_id', companyId).eq('year', year - 1),
       supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
+      supabase.from('week_targets').select('employee_id,sixth_week_cap_min').eq('company_id', companyId).eq('year', year),
     ])
 
     const hasSixthWeek: boolean = (co)?.sixth_week ?? false
@@ -97,14 +97,12 @@ export default function CalcAnnuelPage() {
     const replSlots = (replSlotsRaw ?? []) as ReplacementSlot[]
     const carries = (carryovers ?? []) as Carryover[]
 
-    // Lissage depuis localStorage (pour cap congés)
-    const lissageSaved = localStorage.getItem(`lissage_${companyId}`)
-    const lissageMap: Record<string, LissageEntry> = {}
-    if (lissageSaved) {
-      try {
-        const arr = JSON.parse(lissageSaved) as { id: string; sixthWkMin?: number; normalWeeks?: number }[]
-        for (const r of arr) lissageMap[r.id] = { id: r.id, sixthWkMin: r.sixthWkMin ?? 0, normalWeeks: r.normalWeeks ?? 0 }
-      } catch { /* ignore */ }
+    // Taux de cotisation 6e semaine (pour cap congés) - la base fait foi
+    // (Prompt 3 : plus de lecture localStorage, cf. ReplacementPage.tsx
+    // pour la migration douce des anciens calculs locaux)
+    const capMap: Record<string, number> = {}
+    for (const r of (capRows ?? []) as { employee_id: string; sixth_week_cap_min: number | null }[]) {
+      if (r.sixth_week_cap_min != null) capMap[r.employee_id] = r.sixth_week_cap_min
     }
 
     // Solde live : même calcul que le Bilan 2026 dans PlanningPage
@@ -263,8 +261,7 @@ export default function CalcAnnuelPage() {
       const carryover = carries.find(c => c.employee_id === emp.id)?.carryover_minutes ?? 0
 
       // Congés payés : décompte basé sur semaine type − cap (pour CongesPage)
-      const lis = lissageMap[emp.id]
-      const cap = lis && lis.normalWeeks > 0 ? lis.sixthWkMin / lis.normalWeeks : 0
+      const cap = capMap[emp.id] ?? 0
       const weekTypeTotalFn = (wt: 'A' | 'B') =>
         semSlots.filter(s => s.employee_id === emp.id && s.week_type === wt && !s.is_formation)
           .reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
