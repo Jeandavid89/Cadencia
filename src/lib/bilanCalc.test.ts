@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { computeSimplifiedBilan, type SemaineTypeSlot, type LeaveSlot } from './bilanCalc'
+import { computeSimplifiedBilan, type SemaineTypeSlot, type LeaveSlot, type PeriodSlots } from './bilanCalc'
+import type { PlanningPeriod } from './periods'
 import { getMondayOf, toDateStr } from './weekUtils'
 
 // Semaine type identique en A et B (7h/j, lun-ven) pour neutraliser l'alternance
@@ -14,6 +15,11 @@ function fullWeekSlots(employeeId: string): SemaineTypeSlot[] {
   return slots
 }
 
+const basePeriod: PlanningPeriod = { id: 'base', companyId: 'c1', label: 'Planning de base', isBase: true, startDate: null, endDate: null }
+function onlyBase(semSlots: SemaineTypeSlot[], replSlots: PeriodSlots['replSlots'] = []): PeriodSlots[] {
+  return [{ period: basePeriod, semSlots, replSlots }]
+}
+
 const employee = { id: 'e1', contract_minutes_per_week: 2100, formation_minutes_per_week: 0, leave_weeks_per_year: 5 }
 
 describe('computeSimplifiedBilan', () => {
@@ -22,9 +28,8 @@ describe('computeSimplifiedBilan', () => {
       year: 2026,
       refMonday: getMondayOf(new Date(2026, 0, 5)),
       employees: [employee],
-      semSlots: fullWeekSlots('e1'),
+      periodSlots: onlyBase(fullWeekSlots('e1')),
       leaveSlots: [],
-      replSlots: [],
       holSet: new Set(),
       hasSixthWeek: false,
       capMap: {},
@@ -44,9 +49,8 @@ describe('computeSimplifiedBilan', () => {
       year: 2026,
       refMonday: leaveWeekMonday, // la semaine de congé est donc de type A
       employees: [employee],
-      semSlots: fullWeekSlots('e1'),
+      periodSlots: onlyBase(fullWeekSlots('e1')),
       leaveSlots,
-      replSlots: [],
       hasSixthWeek: false,
       capMap: {},
       carryMap: {},
@@ -68,9 +72,8 @@ describe('computeSimplifiedBilan', () => {
       year: 2026,
       refMonday: leaveWeekMonday,
       employees: [employee],
-      semSlots: fullWeekSlots('e1'),
+      periodSlots: onlyBase(fullWeekSlots('e1')),
       leaveSlots,
-      replSlots: [],
       hasSixthWeek: false,
       capMap: {},
       carryMap: {},
@@ -88,9 +91,8 @@ describe('computeSimplifiedBilan', () => {
       year: 2026,
       refMonday: leaveWeekMonday,
       employees: [employee],
-      semSlots: fullWeekSlots('e1'),
+      periodSlots: onlyBase(fullWeekSlots('e1')),
       leaveSlots,
-      replSlots: [],
       holSet: new Set(),
       hasSixthWeek: false,
       capMap: {},
@@ -106,9 +108,8 @@ describe('computeSimplifiedBilan', () => {
       year: 2026,
       refMonday: getMondayOf(new Date(2026, 0, 5)),
       employees: [employee],
-      semSlots: fullWeekSlots('e1'),
+      periodSlots: onlyBase(fullWeekSlots('e1')),
       leaveSlots: [],
-      replSlots: [],
       holSet: new Set(),
       hasSixthWeek: false,
       capMap: {},
@@ -116,5 +117,65 @@ describe('computeSimplifiedBilan', () => {
     })
     expect(result.e1.soldeHeures).toBe(5 * 2100 + 300)
     expect(result.e1.droitConge).toBe(2100 * 5 + 120)
+  })
+
+  describe('résolution par période (Prompt 9)', () => {
+    it('une période couvrant exactement une semaine civile avec une semaine type différente ne change que cette semaine-là', () => {
+      const ref = getMondayOf(new Date(2026, 0, 5))
+      const monday = getMondayOf(new Date(2026, 2, 2)) // lundi 2 mars 2026
+      const friday = new Date(monday); friday.setDate(friday.getDate() + 4)
+      const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Semaine spéciale', isBase: false, startDate: toDateStr(monday), endDate: toDateStr(friday) }
+
+      // Pendant la période : seulement 3h/jour au lieu de 7h/jour
+      const periodSemSlots: SemaineTypeSlot[] = ['A', 'B'].flatMap(week_type =>
+        Array.from({ length: 5 }, (_, i) => ({ employee_id: 'e1', week_type: week_type as 'A' | 'B', day_of_week: i + 1, start_minutes: 9 * 60, end_minutes: 12 * 60, break_minutes: 0, is_formation: false }))
+      )
+
+      const periodSlots: PeriodSlots[] = [
+        { period: basePeriod, semSlots: fullWeekSlots('e1'), replSlots: [] },
+        { period: ete, semSlots: periodSemSlots, replSlots: [] },
+      ]
+
+      const withPeriod = computeSimplifiedBilan({
+        year: 2026, refMonday: ref, employees: [employee], periodSlots, leaveSlots: [],
+        holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+      const withoutPeriod = computeSimplifiedBilan({
+        year: 2026, refMonday: ref, employees: [employee], periodSlots: onlyBase(fullWeekSlots('e1')), leaveSlots: [],
+        holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+
+      // 5 jours * (7h - 3h) = 20h = 1200 min de moins uniquement sur cette semaine
+      expect(withoutPeriod.e1.soldeHeures - withPeriod.e1.soldeHeures).toBe(1200)
+    })
+
+    it('une période démarrant un mercredi : lundi/mardi utilisent la base, mercredi-vendredi la période', () => {
+      const ref = getMondayOf(new Date(2026, 0, 5))
+      const monday = getMondayOf(new Date(2026, 2, 2)) // lundi 2 mars 2026
+      const wednesday = new Date(monday); wednesday.setDate(wednesday.getDate() + 2)
+      const friday = new Date(monday); friday.setDate(friday.getDate() + 4)
+      const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Mi-semaine', isBase: false, startDate: toDateStr(wednesday), endDate: toDateStr(friday) }
+
+      // Pendant la période : 0h/jour (rien du tout) pour isoler son effet
+      const periodSemSlots: SemaineTypeSlot[] = []
+
+      const periodSlots: PeriodSlots[] = [
+        { period: basePeriod, semSlots: fullWeekSlots('e1'), replSlots: [] },
+        { period: ete, semSlots: periodSemSlots, replSlots: [] },
+      ]
+
+      const withPeriod = computeSimplifiedBilan({
+        year: 2026, refMonday: ref, employees: [employee], periodSlots, leaveSlots: [],
+        holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+      const withoutPeriod = computeSimplifiedBilan({
+        year: 2026, refMonday: ref, employees: [employee], periodSlots: onlyBase(fullWeekSlots('e1')), leaveSlots: [],
+        holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+
+      // Seuls mercredi/jeudi/vendredi (3 jours * 7h = 21h = 1260 min) sont perdus ;
+      // lundi/mardi restent crédités via la base.
+      expect(withoutPeriod.e1.soldeHeures - withPeriod.e1.soldeHeures).toBe(1260)
+    })
   })
 })

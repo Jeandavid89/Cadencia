@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { getWeekType, defaultRefMonday, getMondayOf, toDateStr } from './weekUtils'
-import { eff, computeSimplifiedBilan, type LeaveSlot } from './bilanCalc'
+import { eff, computeSimplifiedBilan, slotsForDate, type LeaveSlot } from './bilanCalc'
 import { loadPlanningData } from './planningData'
 
 export async function computeSoldeLive(companyId: string): Promise<Record<string, number>> {
@@ -22,15 +22,13 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
   const refStr = (coData)?.reference_week_date as string | null
   const ref = refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year)
 
-  const semSlots = planningData.semSlots
   const lSlots = (leaveSlots ?? []) as LeaveSlot[]
-  const rSlots = planningData.replSlots
   const carryMap: Record<string, { carryover_minutes: number; carryover_leave_minutes: number }> = {}
   for (const c of (carryData ?? []) as { employee_id: string; carryover_minutes: number }[]) carryMap[c.employee_id] = { carryover_minutes: c.carryover_minutes, carryover_leave_minutes: 0 }
 
   const holSet = new Set(((hols ?? []) as { date: string }[]).map(h => h.date))
   const simplified = computeSimplifiedBilan({
-    year, refMonday: ref, employees: emps, semSlots, leaveSlots: lSlots, replSlots: rSlots,
+    year, refMonday: ref, employees: emps, periodSlots: planningData.periodSlots, leaveSlots: lSlots,
     holSet, hasSixthWeek: false, capMap: {}, carryMap,
   })
 
@@ -59,8 +57,10 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
       let reference = 0
       for (let d = 1; d <= 5; d++) {
         if (absentDays.has(d)) continue
-        const dayRef = semSlots.filter(s => s.employee_id === emp.id && s.week_type === cwWeekType && s.day_of_week === d && !s.is_formation).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
-        const replForDay = rSlots.filter(r => r.present_employee_id === emp.id && r.day_of_week === d && !r.is_formation && absentCols.has(r.absent_employee_id))
+        const dayDate = new Date(cwMon); dayDate.setDate(cwMon.getDate() + (d - 1))
+        const { semSlots: daySemSlots, replSlots: dayReplSlots } = slotsForDate(planningData.periodSlots, dayDate)
+        const dayRef = daySemSlots.filter(s => s.employee_id === emp.id && s.week_type === cwWeekType && s.day_of_week === d && !s.is_formation).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
+        const replForDay = dayReplSlots.filter(r => r.present_employee_id === emp.id && r.day_of_week === d && !r.is_formation && absentCols.has(r.absent_employee_id))
         reference += replForDay.length > 0 ? replForDay.reduce((a, r) => a + eff(r.start_minutes, r.end_minutes, r.break_minutes), 0) : dayRef
       }
       const actual = cwSlots.filter(s => s.employee_id === emp.id && s.slot_type === 'work' && s.start_minutes != null).reduce((a, s) => a + eff(s.start_minutes!, s.end_minutes ?? s.start_minutes!, s.break_minutes ?? 0), 0)

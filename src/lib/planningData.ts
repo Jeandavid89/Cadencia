@@ -1,18 +1,12 @@
 import { supabase } from './supabase'
 import type { PlanningPeriod } from './periods'
-import type { SemaineTypeSlot, ReplacementSlot } from './bilanCalc'
+import type { SemaineTypeSlot, ReplacementSlot, PeriodSlots } from './bilanCalc'
 
 // Lignes réellement renvoyées par Supabase : le `id` de la ligne et son
 // `period_id` sont présents en plus des champs "purs" consommés par
 // bilanCalc.ts (dont les fonctions ne doivent connaître ni l'un ni l'autre).
 export type SemaineTypeSlotRow = SemaineTypeSlot & { id: string; period_id: string }
 export type ReplacementSlotRow = ReplacementSlot & { id: string; period_id: string }
-
-export interface PeriodSlots {
-  period: PlanningPeriod
-  semSlots: SemaineTypeSlot[]
-  replSlots: ReplacementSlot[]
-}
 
 export interface PlanningData {
   periods: PlanningPeriod[]

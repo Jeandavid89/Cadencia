@@ -418,9 +418,7 @@ export default function PlanningPage() {
     const refStr = (coData)?.reference_week_date as string | null
     const ref = refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year)
     const holSet = new Set(((hols ?? []) as { date: string }[]).map(h => h.date))
-    const semSlots = planningData.semSlots
     const lSlots = (leaveSlots ?? []) as { employee_id: string; date: string; slot_type: string; start_minutes?: number | null; end_minutes?: number | null }[]
-    const rSlots = planningData.replSlots
     // Taux de cotisation 6e semaine - la base fait foi (Prompt 3, plus de
     // lecture localStorage ici, cf. migration douce dans ReplacementPage.tsx)
     const capMap: Record<string, number> = {}
@@ -432,7 +430,7 @@ export default function PlanningPage() {
       carryMap[c.employee_id] = { carryover_minutes: c.carryover_minutes, carryover_leave_minutes: c.carryover_leave_minutes }
 
     const simplified = computeSimplifiedBilan({
-      year, refMonday: ref, employees: emps, semSlots, leaveSlots: lSlots, replSlots: rSlots,
+      year, refMonday: ref, employees: emps, periodSlots: planningData.periodSlots, leaveSlots: lSlots,
       holSet, hasSixthWeek, capMap, carryMap,
     })
     const rows: BilanRow[] = emps.map((emp, i) => {

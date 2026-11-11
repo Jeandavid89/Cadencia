@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import { getWeekType, defaultRefMonday, toDateStr, getMondayOf, getYearWeekMondays } from '../lib/weekUtils'
 import { computeSoldeLive } from '../lib/bilanUtils'
+import { slotsForDate } from '../lib/bilanCalc'
 import { loadPlanningData } from '../lib/planningData'
 
 interface Employee {
@@ -45,11 +46,6 @@ interface SemaineTypeSlot {
   start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean
 }
 interface LeaveSlot { employee_id: string; date: string; slot_type: string; start_minutes?: number | null; end_minutes?: number | null }
-interface ReplacementSlot {
-  absent_employee_id: string; present_employee_id: string
-  day_of_week: number; start_minutes: number; end_minutes: number
-  break_minutes: number; is_formation: boolean
-}
 interface Carryover { employee_id: string; carryover_minutes: number; carryover_leave_minutes: number }
 
 const fullName = (e: Employee) => `${e.first_name} ${e.last_name}`.trim() || 'Sans nom'
@@ -138,10 +134,13 @@ export default function CalcAnnuelPage() {
 
     const employees = emps as Employee[]
     const holSet = new Set(((hols ?? []) as { date: string }[]).map(h => h.date))
-    const semSlots = planningData.semSlots as SemaineTypeSlot[]
     const leaveSlots = (leaveSlotsRaw ?? []) as LeaveSlot[]
-    const replSlots = planningData.replSlots as ReplacementSlot[]
     const carries = (carryovers ?? []) as Carryover[]
+    // Base (planning perpétuel) utilisée pour les totaux purement informatifs
+    // (semATotal/semBTotal) qui n'ont pas de date propre - cf. Prompt 11 pour
+    // un éventuel sélecteur de période explicite sur cet affichage.
+    const basePeriodSlots = planningData.periodSlots.find(ps => ps.period.id === planningData.basePeriodId)
+    const baseSemSlots = (basePeriodSlots?.semSlots ?? []) as SemaineTypeSlot[]
 
     // Taux de cotisation 6e semaine (pour cap congés) - la base fait foi
     // (Prompt 3 : plus de lecture localStorage, cf. ReplacementPage.tsx
@@ -226,16 +225,20 @@ export default function CalcAnnuelPage() {
           // Jour de congé isolé (hors semaine de congé entière)
           if (!isLeaveWeek && leaveDayDates.has(ds)) continue
 
+          // Semaine type/remplacement résolus pour CE jour précis : permet à
+          // une période datée de ne couvrir qu'une partie d'une semaine civile.
+          const { semSlots: daySemSlots, replSlots: dayReplSlots } = slotsForDate(planningData.periodSlots, day)
+
           // Remplacement ce jour précis ? (vérifié avant le filtre férié)
-          const dayReplSlots = replSlots.filter(r =>
+          const dayReplMatches = dayReplSlots.filter(r =>
             r.present_employee_id === emp.id &&
             r.day_of_week === jsDay &&
             absentColleagues.some(a => a.id === r.absent_employee_id)
           )
 
-          if (dayReplSlots.length > 0) {
+          if (dayReplMatches.length > 0) {
             weekIsRepl = true
-            for (const r of dayReplSlots) {
+            for (const r of dayReplMatches) {
               const mins = eff(r.start_minutes, r.end_minutes, r.break_minutes)
               if (r.is_formation) {
                 if (!isLeaveWeek) formationMin += mins
@@ -252,7 +255,7 @@ export default function CalcAnnuelPage() {
             }
           } else {
             // Semaine normale ou férié en semaine de congé : semaine type
-            for (const s of semSlots.filter(ss => ss.employee_id === emp.id && ss.week_type === weekType && ss.day_of_week === jsDay)) {
+            for (const s of daySemSlots.filter(ss => ss.employee_id === emp.id && ss.week_type === weekType && ss.day_of_week === jsDay)) {
               const mins = eff(s.start_minutes, s.end_minutes, s.break_minutes)
               if (s.is_formation) {
                 if (!isLeaveWeek) formationMin += mins
@@ -291,10 +294,12 @@ export default function CalcAnnuelPage() {
         })
         .sort((a, b) => b.weeks - a.weeks)
 
-      // Congés payés : décompte basé sur semaine type − cap (pour CongesPage)
+      // Congés payés : décompte basé sur semaine type − cap (pour CongesPage),
+      // résolu par la période active à la date du congé (Prompt 9).
       const cap = capMap[emp.id] ?? 0
-      const weekTypeTotalFn = (wt: 'A' | 'B') =>
-        semSlots.filter(s => s.employee_id === emp.id && s.week_type === wt && !s.is_formation)
+      const weekTypeTotalForDate = (date: Date, wt: 'A' | 'B') =>
+        slotsForDate(planningData.periodSlots, date).semSlots
+          .filter(s => s.employee_id === emp.id && s.week_type === wt && !s.is_formation)
           .reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
 
       let leaveMin = 0
@@ -305,7 +310,7 @@ export default function CalcAnnuelPage() {
         if (processedMondays.has(monKey)) continue
         processedMondays.add(monKey)
         const wt = getWeekType(d, refMonday)
-        leaveMin += Math.round(Math.max(0, weekTypeTotalFn(wt) - cap))
+        leaveMin += Math.round(Math.max(0, weekTypeTotalForDate(d, wt) - cap))
       }
       for (const ls of empLeaveSlots.filter(s => s.slot_type === 'leave_day')) {
         if (holSet.has(ls.date)) continue
@@ -313,9 +318,10 @@ export default function CalcAnnuelPage() {
         const jsDay = d.getDay()
         if (jsDay < 1 || jsDay > 5) continue
         const wt = getWeekType(d, refMonday)
-        const dayMin = semSlots.filter(s => s.employee_id === emp.id && s.week_type === wt && s.day_of_week === jsDay && !s.is_formation)
+        const dayMin = slotsForDate(planningData.periodSlots, d).semSlots
+          .filter(s => s.employee_id === emp.id && s.week_type === wt && s.day_of_week === jsDay && !s.is_formation)
           .reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
-        const total = weekTypeTotalFn(wt)
+        const total = weekTypeTotalForDate(d, wt)
         const k = total > 0 ? (total - cap) / total : 1
         leaveMin += Math.round(dayMin * k)
       }
@@ -331,8 +337,8 @@ export default function CalcAnnuelPage() {
       const droitConge = effectifHebdo * emp.leave_weeks_per_year + sixthWkMin + carryoverLeave
       const soldeConge = droitConge - leaveMin
 
-      const semATotal = semSlots.filter(s => s.employee_id === emp.id && s.week_type === 'A' && !s.is_formation && s.start_minutes != null && s.end_minutes != null).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes ?? 0), 0)
-      const semBTotal = semSlots.filter(s => s.employee_id === emp.id && s.week_type === 'B' && !s.is_formation && s.start_minutes != null && s.end_minutes != null).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes ?? 0), 0)
+      const semATotal = baseSemSlots.filter(s => s.employee_id === emp.id && s.week_type === 'A' && !s.is_formation && s.start_minutes != null && s.end_minutes != null).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes ?? 0), 0)
+      const semBTotal = baseSemSlots.filter(s => s.employee_id === emp.id && s.week_type === 'B' && !s.is_formation && s.start_minutes != null && s.end_minutes != null).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes ?? 0), 0)
 
       const soldeLive: number | null = isCurrentYear && soldeLiveMap[emp.id] !== undefined
         ? soldeLiveMap[emp.id]
