@@ -345,15 +345,22 @@ export default function SemaineTypePage() {
 
     setProjecting(false)
     if (missingDates.length > 0) {
+      // Liste les jours réellement manquants (pas une plage "premier → dernier"
+      // qui laisserait croire que toute la semaine est vide alors que seuls 1
+      // ou 2 jours précis le sont - cf. semaine type sans horaire ce jour-là,
+      // cas normal et pas une erreur de génération).
       const byWeek = new Map<number, string[]>()
       for (const d of missingDates) {
         const w = getISOWeek(new Date(d + 'T00:00:00'))
         if (!byWeek.has(w)) byWeek.set(w, [])
         byWeek.get(w)!.push(d)
       }
-      const lines = [...byWeek.entries()].map(([w, dates]) => `S${w} (${dates[0]} → ${dates[dates.length - 1]})`)
-      alert(`⚠ Planning incomplet — ${missingDates.length} jour(s) manquant(s) :\n${lines.join('\n')}\n\nRelancez la génération sur ces semaines.`)
-      setProjDone(false)
+      const lines = [...byWeek.entries()].map(([w, dates]) => {
+        const days = dates.map(d => DAY_NAMES[new Date(d + 'T12:00:00').getDay() - 1] ?? d).join(', ')
+        return `S${w} : ${days}`
+      })
+      alert(`ℹ ${missingDates.length} jour(s) sans aucun horaire généré, car aucun employé n'a de créneau ce jour-là dans la semaine type :\n${lines.join('\n')}\n\nSi ce n'est pas volontaire, vérifiez la semaine type de ces jours.`)
+      setProjDone(true)
     } else {
       setProjDone(true)
     }
