@@ -191,6 +191,16 @@ export default function SemaineTypePage() {
     setProjDone(false)
   }
 
+  function resetToEmpty() {
+    if (slotsA.length === 0 && slotsB.length === 0) return
+    if (!confirm('Vider entièrement la semaine type de cette période (semaine A et B) ?')) return
+    setSlotsA([])
+    setSlotsB([])
+    scheduleSave('A', [])
+    scheduleSave('B', [])
+    setProjDone(false)
+  }
+
   async function project() {
     if (!projStartDate || !projEndDate) return
     setProjecting(true); setProjDone(false)
@@ -399,6 +409,12 @@ export default function SemaineTypePage() {
             <button onClick={copyFromBase} disabled={copyingBase}
               className="text-xs font-semibold border border-indigo-200 rounded-lg px-3 py-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40 transition-colors">
               ↺ Copier depuis le planning de base
+            </button>
+          )}
+          {(slotsA.length > 0 || slotsB.length > 0) && (
+            <button onClick={resetToEmpty}
+              className="text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2 text-slate-500 bg-white hover:bg-red-50 hover:text-red-500 hover:border-red-200 transition-colors">
+              ✕ Repartir de 0
             </button>
           )}
           {saving && <div className="flex items-center gap-2 text-xs text-slate-400"><div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-indigo-400 rounded-full animate-spin" />Enregistrement…</div>}
