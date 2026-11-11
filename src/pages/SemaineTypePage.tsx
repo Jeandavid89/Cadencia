@@ -206,7 +206,16 @@ export default function SemaineTypePage() {
     setProjecting(true); setProjDone(false)
     const { employees: emps, holidays: hols } = stateRef.current
     const start = getMondayOf(new Date(projStartDate + 'T00:00:00'))
-    const end = new Date(projEndDate + 'T23:59:59')
+    // Arrondi au vendredi de sa semaine, comme le début est déjà arrondi au
+    // lundi - sinon une période qui finit un autre jour que vendredi laisse
+    // le reste de sa semaine civile (couvert par une autre période ou la
+    // base) jamais généré tant qu'on ne relance pas une 2e fois à la main.
+    const end = (() => {
+      const fri = getMondayOf(new Date(projEndDate + 'T00:00:00'))
+      fri.setDate(fri.getDate() + 4)
+      fri.setHours(23, 59, 59)
+      return fri
+    })()
     const holSet = new Set(hols)
     const startStr = toDateStr(start)
     const endStr = toDateStr(end)
