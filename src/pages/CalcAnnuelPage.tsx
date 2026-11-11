@@ -5,13 +5,14 @@ import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import { getWeekType, defaultRefMonday, toDateStr, getMondayOf, getYearWeekMondays } from '../lib/weekUtils'
 import { computeSoldeLive } from '../lib/bilanUtils'
-import { slotsForDate } from '../lib/bilanCalc'
+import { slotsForDate, isWeekInEmployment } from '../lib/bilanCalc'
 import { loadPlanningData } from '../lib/planningData'
 
 interface Employee {
   id: string; first_name: string; last_name: string
   contract_minutes_per_week: number; formation_minutes_per_week: number
   leave_weeks_per_year: number
+  entry_date: string; exit_date: string | null
 }
 interface Row {
   emp: Employee
@@ -114,7 +115,11 @@ export default function CalcAnnuelPage() {
     const to = `${year}-12-31`
 
     const [{ data: emps }, { data: hols }, planningData, { data: leaveSlotsRaw }, { data: carryovers }, { data: co }, { data: capRows }, { data: ownClosure }] = await Promise.all([
-      supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year').eq('company_id', companyId).eq('active', true).order('sort_order'),
+      // Pas de filtre active=true ici : un employé sorti en cours/avant cette
+      // année doit rester visible quand on consulte cette année-là (Prompt 12,
+      // bug corrigé - il disparaissait silencieusement des années passées).
+      // Le filtrage par fenêtre d'emploi réelle se fait juste en-dessous.
+      supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year,entry_date,exit_date').eq('company_id', companyId).order('sort_order'),
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
       loadPlanningData(companyId),
       supabase.from('planning_slots').select('employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_week', 'leave_day', 'leave_partial']),
@@ -132,7 +137,11 @@ export default function CalcAnnuelPage() {
 
     if (!emps) { setLoaded(true); return }
 
-    const employees = emps as Employee[]
+    // Ne garder que les employés dont la fenêtre d'emploi touche l'année
+    // consultée (entrés avant/pendant, et pas sortis avant le 1er janvier) -
+    // inclut naturellement les employés actifs (exit_date null) et les
+    // anciens employés pertinents pour cette année précise.
+    const employees = (emps as Employee[]).filter(e => e.entry_date <= to && (!e.exit_date || e.exit_date >= from))
     const holSet = new Set(((hols ?? []) as { date: string }[]).map(h => h.date))
     const leaveSlots = (leaveSlotsRaw ?? []) as LeaveSlot[]
     const carries = (carryovers ?? []) as Carryover[]
@@ -180,7 +189,12 @@ export default function CalcAnnuelPage() {
       // soustraire du cible (la simulation l'inclut déjà dans les semaines travaillées).
       const effectiveLeave = emp.leave_weeks_per_year
       const effectiveContract = emp.contract_minutes_per_week - emp.formation_minutes_per_week
-      const cible = (T - effectiveLeave) * effectiveContract
+      // Semaines complètes dans la fenêtre d'emploi réelle de l'employé
+      // (Prompt 12) - un employé entré/sorti en cours d'année a une cible
+      // réduite d'autant, sans prorata infra-semaine.
+      const employedWeeks = weekMondays.filter(wm => isWeekInEmployment(wm, emp.entry_date, emp.exit_date))
+      const T_emp = employedWeeks.length
+      const cible = (T_emp - effectiveLeave) * effectiveContract
 
       const empLeaveSlots = leaveSlots.filter(s => s.employee_id === emp.id)
       const absentWeekMondays = absentWeeksByEmp[emp.id]
@@ -198,6 +212,7 @@ export default function CalcAnnuelPage() {
       const replByAbsent: Record<string, { weeks: Set<string>; totalMin: number }> = {}
 
       for (const weekMon of weekMondays) {
+        if (!isWeekInEmployment(weekMon, emp.entry_date, emp.exit_date)) continue // hors contrat : aucune contribution
         const monKey = toDateStr(weekMon)
         const weekType = getWeekType(weekMon, refMonday)
         const isLeaveWeek = absentWeekMondays.has(monKey)
@@ -344,7 +359,7 @@ export default function CalcAnnuelPage() {
         ? soldeLiveMap[emp.id]
         : null
 
-      return { emp, T, effectiveLeave, cible, simulatedMin, holidayMin, formationMin, solde, carryover, carryoverLeave, sixthWkMin, droitConge, leaveMin, soldeConge, semATotal, semBTotal, replWeeksCount, replSimMin, normalWeeksCount, normalSimMin, normalWeeksCountA, normalSimMinA, normalWeeksCountB, normalSimMinB, replByAbsent: replByAbsentArr, soldeLive }
+      return { emp, T: T_emp, effectiveLeave, cible, simulatedMin, holidayMin, formationMin, solde, carryover, carryoverLeave, sixthWkMin, droitConge, leaveMin, soldeConge, semATotal, semBTotal, replWeeksCount, replSimMin, normalWeeksCount, normalSimMin, normalWeeksCountA, normalSimMinA, normalWeeksCountB, normalSimMinB, replByAbsent: replByAbsentArr, soldeLive }
     })
 
     setRows(result)

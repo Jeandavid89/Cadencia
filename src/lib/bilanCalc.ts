@@ -8,6 +8,8 @@ export interface SimplifiedEmployee {
   contract_minutes_per_week: number
   formation_minutes_per_week: number
   leave_weeks_per_year: number
+  entry_date?: string | null // 'YYYY-MM-DD' - absent/null = employé depuis toujours (compat historique)
+  exit_date?: string | null  // 'YYYY-MM-DD' - absent/null = toujours en poste
 }
 export interface SemaineTypeSlot {
   employee_id: string; week_type: 'A' | 'B'; day_of_week: number
@@ -61,6 +63,21 @@ export function slotsForDate(periodSlots: PeriodSlots[], date: Date): { semSlots
 }
 
 /**
+ * Une semaine (lundi à vendredi) ne compte dans la cible/le solde d'un
+ * employé que si elle tombe ENTIÈREMENT dans sa fenêtre d'emploi - pas de
+ * prorata infra-semaine (règle validée explicitement). `entryDate`/`exitDate`
+ * absents ou null signifient respectivement "employé depuis toujours" et
+ * "toujours en poste", pour rester compatible avec les appels existants qui
+ * ne fournissent pas ces champs.
+ */
+export function isWeekInEmployment(weekMon: Date, entryDate?: string | null, exitDate?: string | null): boolean {
+  const weekFri = new Date(weekMon); weekFri.setDate(weekMon.getDate() + 4)
+  if (entryDate && toDateStr(weekMon) < entryDate) return false
+  if (exitDate && toDateStr(weekFri) > exitDate) return false
+  return true
+}
+
+/**
  * Modèle "simplifié" (semaine par semaine, semaine type × nombre de semaines)
  * partagé par computeSoldeLive (badge live) et PlanningPage::loadBilan
  * (mini-bilan). Distinct du modèle détaillé jour par jour de
@@ -78,7 +95,6 @@ export function slotsForDate(periodSlots: PeriodSlots[], date: Date): { semSlots
 export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<string, SimplifiedBilanRow> {
   const { year, refMonday, employees, periodSlots, leaveSlots, holSet, hasSixthWeek, capMap, carryMap } = input
   const weekMondays = getYearWeekMondays(year)
-  const T = weekMondays.length
 
   const absentWeeksByEmp: Record<string, Set<string>> = {}
   for (const emp of employees) absentWeeksByEmp[emp.id] = new Set()
@@ -90,7 +106,12 @@ export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<stri
   for (const emp of employees) {
     const effectiveContract = emp.contract_minutes_per_week - emp.formation_minutes_per_week
     const effectiveLeave = emp.leave_weeks_per_year
-    const cible = (T - effectiveLeave) * effectiveContract
+    // Semaines effectivement couvertes par la fenêtre d'emploi de cet employé
+    // (semaines complètes uniquement) - un employé entré/sorti en cours
+    // d'année a donc une cible réduite d'autant, sans affecter les autres.
+    const employedWeeks = weekMondays.filter(wm => isWeekInEmployment(wm, emp.entry_date, emp.exit_date))
+    const T_emp = employedWeeks.length
+    const cible = (T_emp - effectiveLeave) * effectiveContract
 
     const empLeaveSlots = leaveSlots.filter(s => s.employee_id === emp.id)
     const absentWeekMondays = absentWeeksByEmp[emp.id]
@@ -100,6 +121,7 @@ export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<stri
     const replByAbsent: Record<string, number> = {}
 
     for (const weekMon of weekMondays) {
+      if (!isWeekInEmployment(weekMon, emp.entry_date, emp.exit_date)) continue // hors contrat : aucune contribution
       const monKey = toDateStr(weekMon)
       const isLeaveWeek = absentWeekMondays.has(monKey)
 

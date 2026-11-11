@@ -9,7 +9,11 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
   const to = `${year}-12-31`
 
   const [{ data: emps }, { data: hols }, planningData, { data: leaveSlots }, { data: coData }, { data: carryData }] = await Promise.all([
-    supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year').eq('company_id', companyId).eq('active', true).order('sort_order'),
+    // entry_date/exit_date : un employé entré en cours d'année courante a une
+    // cible proratée par computeSimplifiedBilan plutôt qu'un solde faussé
+    // (Prompt 12). active=true reste pertinent ici : le badge "en direct" ne
+    // concerne que l'équipe actuellement en poste.
+    supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year,entry_date,exit_date').eq('company_id', companyId).eq('active', true).order('sort_order'),
     supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
     loadPlanningData(companyId),
     supabase.from('planning_slots').select('employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_week', 'leave_day', 'leave_partial']),

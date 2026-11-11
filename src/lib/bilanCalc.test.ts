@@ -178,4 +178,77 @@ describe('computeSimplifiedBilan', () => {
       expect(withoutPeriod.e1.soldeHeures - withPeriod.e1.soldeHeures).toBe(1260)
     })
   })
+
+  describe('entry_date / exit_date (Prompt 12)', () => {
+    it('un employé entré en cours d\'année a une cible réduite et aucune contribution avant son entrée', () => {
+      const ref = getMondayOf(new Date(2026, 0, 5))
+      const entryDate = toDateStr(getMondayOf(new Date(2026, 8, 1))) // 1er septembre 2026 (mardi -> lundi de sa semaine)
+      const empMidYear = { ...employee, entry_date: entryDate, exit_date: null }
+
+      const resultFull = computeSimplifiedBilan({
+        year: 2026, refMonday: ref, employees: [employee], periodSlots: onlyBase(fullWeekSlots('e1')), leaveSlots: [],
+        holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+      const resultMidYear = computeSimplifiedBilan({
+        year: 2026, refMonday: ref, employees: [empMidYear], periodSlots: onlyBase(fullWeekSlots('e1')), leaveSlots: [],
+        holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+
+      // La cible de l'employé entré en septembre doit être strictement inférieure
+      // (moins de semaines comptées), et son solde reflète uniquement les semaines
+      // depuis son entrée (toujours exactement 5 semaines de congé créditées au-dessus
+      // de la cible, puisqu'aucun congé n'est posé dans ce test).
+      expect(resultMidYear.e1.cible).toBeLessThan(resultFull.e1.cible)
+      expect(resultMidYear.e1.soldeHeures).toBe(5 * 2100)
+    })
+
+    it('un employé sorti en cours d\'année n\'est plus crédité après sa sortie, mais reste crédité avant', () => {
+      const ref = getMondayOf(new Date(2026, 0, 5))
+      const exitDate = toDateStr(new Date(getMondayOf(new Date(2026, 5, 1)).getTime() - 3 * 86400000)) // vendredi fin mai
+      const empLeftMidYear = { ...employee, entry_date: null, exit_date: exitDate }
+
+      const result = computeSimplifiedBilan({
+        year: 2026, refMonday: ref, employees: [empLeftMidYear], periodSlots: onlyBase(fullWeekSlots('e1')), leaveSlots: [],
+        holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+      const resultFull = computeSimplifiedBilan({
+        year: 2026, refMonday: ref, employees: [employee], periodSlots: onlyBase(fullWeekSlots('e1')), leaveSlots: [],
+        holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+
+      // Moins de semaines employées => cible plus faible, mais toujours un
+      // employé "présent" dans le calcul (pas d'exception, pas de disparition) -
+      // non-régression du bug où un employé sorti disparaissait silencieusement.
+      expect(result.e1.cible).toBeLessThan(resultFull.e1.cible)
+      expect(result.e1.soldeHeures).toBe(5 * 2100)
+    })
+
+    it('un employé rejoignant l\'équipe pendant une période datée : intersection correcte emploi × période', () => {
+      const ref = getMondayOf(new Date(2026, 0, 5))
+      const periodStart = getMondayOf(new Date(2026, 2, 2)) // lundi 2 mars 2026
+      const periodEnd = new Date(periodStart); periodEnd.setDate(periodEnd.getDate() + 4)
+      const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Période test', isBase: false, startDate: toDateStr(periodStart), endDate: toDateStr(periodEnd) }
+      // Entré le mercredi de cette même semaine de période
+      const entryDate = toDateStr(new Date(periodStart.getTime() + 2 * 86400000))
+      const empJoinsMidPeriod = { ...employee, entry_date: entryDate, exit_date: null }
+
+      const periodSlots: PeriodSlots[] = [
+        { period: basePeriod, semSlots: fullWeekSlots('e1'), replSlots: [] },
+        { period: ete, semSlots: fullWeekSlots('e1'), replSlots: [] },
+      ]
+
+      const result = computeSimplifiedBilan({
+        year: 2026, refMonday: ref, employees: [empJoinsMidPeriod], periodSlots, leaveSlots: [],
+        holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+      const resultFull = computeSimplifiedBilan({
+        year: 2026, refMonday: ref, employees: [employee], periodSlots, leaveSlots: [],
+        holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+
+      // La semaine à cheval (entrée un mercredi) n'est pas une semaine complète :
+      // elle ne compte dans la cible de personne (règle "semaines complètes").
+      expect(result.e1.cible).toBeLessThan(resultFull.e1.cible)
+    })
+  })
 })

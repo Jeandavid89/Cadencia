@@ -26,7 +26,7 @@ interface Employee {
   id: string; first_name: string; last_name: string
   contract_minutes_per_week: number; formation_minutes_per_week: number
   leave_minutes_per_year: number; leave_weeks_per_year: number
-  entry_date: string; sort_order: number; color_index: number | null
+  entry_date: string; exit_date: string | null; sort_order: number; color_index: number | null
 }
 
 function leaveMinutes(emp: Employee) {
@@ -101,18 +101,21 @@ export default function AdminPage() {
   const [holidays, setHolidays] = useState<Holiday[]>([])
   const [newHoliday, setNewHoliday] = useState({ date: '', name: '' })
   const [employees, setEmployees] = useState<Employee[]>([])
+  const [formerEmployees, setFormerEmployees] = useState<Employee[]>([])
   const [saving, setSaving] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [refDateStr, setRefDateStr] = useState('')
   const [teamValidatedAt, setTeamValidatedAt] = useState<string | null>(null)
+  const [exitModal, setExitModal] = useState<{ id: string; name: string; date: string } | null>(null)
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   useEffect(() => {
     if (!companyId) return
     async function load() {
-      const [{ data: co }, { data: emps }, { data: hols }] = await Promise.all([
+      const [{ data: co }, { data: emps }, { data: former }, { data: hols }] = await Promise.all([
         supabase.from('companies').select('sixth_week,reference_week_date,team_validated_at').eq('id', companyId).single(),
         supabase.from('employees').select('*').eq('company_id', companyId).eq('active', true).order('sort_order'),
+        supabase.from('employees').select('*').eq('company_id', companyId).eq('active', false).order('exit_date', { ascending: false }),
         supabase.from('public_holidays').select('*').eq('company_id', companyId).eq('year', CURRENT_YEAR).order('date'),
       ])
       if (co) {
@@ -122,6 +125,7 @@ export default function AdminPage() {
         setTeamValidatedAt((co).team_validated_at ?? null)
       }
       if (emps) setEmployees(emps)
+      if (former) setFormerEmployees(former)
       if (hols && hols.length > 0) setHolidays(hols)
       else {
         const rows = FRENCH_HOLIDAYS_2026.map(h => ({ ...h, company_id: companyId, year: CURRENT_YEAR }))
@@ -178,9 +182,24 @@ export default function AdminPage() {
     if (data) { setEmployees(p => [...p, data]); invalidateTeam() }
   }
 
-  async function removeEmployee(id: string) {
-    await supabase.from('employees').update({ active: false }).eq('id', id)
+  function openExitModal(emp: Employee) {
+    setExitModal({ id: emp.id, name: `${emp.first_name} ${emp.last_name}`.trim() || 'Sans nom', date: toDateStr(new Date()) })
+  }
+
+  async function confirmRemoveEmployee() {
+    if (!exitModal) return
+    const { id, date } = exitModal
+    const { data } = await supabase.from('employees').update({ active: false, exit_date: date }).eq('id', id).select().single()
     setEmployees(p => p.filter(e => e.id !== id))
+    if (data) setFormerEmployees(p => [data, ...p])
+    setExitModal(null)
+    invalidateTeam()
+  }
+
+  async function reactivateEmployee(emp: Employee) {
+    const { data } = await supabase.from('employees').update({ active: true, exit_date: null }).eq('id', emp.id).select().single()
+    setFormerEmployees(p => p.filter(e => e.id !== emp.id))
+    if (data) setEmployees(p => [...p, data])
     invalidateTeam()
   }
 
@@ -293,7 +312,7 @@ export default function AdminPage() {
                           </div>
                         </div>
                         {employees.length > 1 && (
-                          <button onClick={() => removeEmployee(emp.id)}
+                          <button onClick={() => openExitModal(emp)}
                             className="opacity-0 group-hover:opacity-100 text-xs text-slate-300 hover:text-red-400 transition-all px-3 py-1.5 rounded-lg hover:bg-red-50">
                             Supprimer
                           </button>
@@ -476,8 +495,64 @@ export default function AdminPage() {
             </div>
           </div>
 
+          {/* Anciens employés */}
+          {formerEmployees.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
+                <SectionTitle>Anciens employés</SectionTitle>
+                <span className="text-xs text-slate-400 font-medium">{formerEmployees.length}</span>
+              </div>
+              <div className="px-6 py-5 flex flex-col gap-2">
+                {formerEmployees.map(emp => (
+                  <div key={emp.id} className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-xl px-4 py-3">
+                    <div>
+                      <div className="text-sm font-medium text-slate-600">
+                        {emp.first_name || emp.last_name ? `${emp.first_name} ${emp.last_name}`.trim() : 'Sans nom'}
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Sorti{emp.exit_date ? ` le ${new Date(emp.exit_date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}` : ''}
+                      </div>
+                    </div>
+                    <button onClick={() => reactivateEmployee(emp)}
+                      className="text-xs font-medium text-indigo-500 hover:text-indigo-700 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors">
+                      Réactiver
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
+
+      {/* Modale confirmation sortie employé */}
+      {exitModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={() => setExitModal(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-bold text-slate-800 mb-1">Faire sortir {exitModal.name}</h3>
+            <p className="text-xs text-slate-400 mb-4">
+              L'employé(e) disparaîtra de l'équipe active, mais restera visible sur les années passées où il/elle a travaillé. Vous pourrez le/la réactiver à tout moment.
+            </p>
+            <div className="flex flex-col gap-1.5 mb-5">
+              <label className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Date de sortie</label>
+              <input type="date" value={exitModal.date}
+                onChange={e => setExitModal(m => m ? { ...m, date: e.target.value } : m)}
+                className="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 transition-all" />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setExitModal(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-500 hover:text-slate-700 transition-colors">
+                Annuler
+              </button>
+              <button onClick={confirmRemoveEmployee}
+                className="px-4 py-2 text-xs font-semibold bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors">
+                Confirmer la sortie
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
