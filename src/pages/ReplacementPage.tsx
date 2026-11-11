@@ -346,6 +346,19 @@ export default function ReplacementPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-bold text-slate-800">Remplacement & Lissage</h1>
+            {(() => {
+              const current = periods.find(p => p.id === periodId)
+              if (!current) return null
+              return current.isBase ? (
+                <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
+                  Planning de base
+                </span>
+              ) : (
+                <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-full">
+                  Période : {current.label} ({current.startDate} → {current.endDate})
+                </span>
+              )
+            })()}
             {periods.length > 1 && (
               <select
                 value={periodId ?? ''}

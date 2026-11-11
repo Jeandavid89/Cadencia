@@ -66,6 +66,10 @@ export default function SemaineTypePage() {
   // Période éditée - la base par défaut, ou celle passée dans ?period=<id>
   const [periodId, setPeriodId] = useState<string | null>(null)
   const [periods, setPeriods] = useState<PlanningPeriod[]>([])
+  const [basePeriodId, setBasePeriodId] = useState<string | null>(null)
+  const [baseSlotsA, setBaseSlotsA] = useState<PlannerSlot[]>([])
+  const [baseSlotsB, setBaseSlotsB] = useState<PlannerSlot[]>([])
+  const [copyingBase, setCopyingBase] = useState(false)
 
   const saveTimers = useRef<{ A: ReturnType<typeof setTimeout> | null; B: ReturnType<typeof setTimeout> | null }>({ A: null, B: null })
   const stateRef = useRef({ A: slotsA, B: slotsB, employees, holidays })
@@ -99,10 +103,28 @@ export default function SemaineTypePage() {
       ? requestedPeriodId
       : planningData.basePeriodId
     setPeriodId(resolvedPeriodId)
+    setBasePeriodId(planningData.basePeriodId)
+    // Pré-remplit "Projeter sur le planning" avec les dates de la période
+    // éditée (modifiables ensuite) - pour la base, garde la valeur par défaut
+    // (aujourd'hui → 31 décembre de l'année en cours).
+    const resolvedPeriod = planningData.periods.find(p => p.id === resolvedPeriodId)
+    if (resolvedPeriod && !resolvedPeriod.isBase && resolvedPeriod.startDate && resolvedPeriod.endDate) {
+      setProjStartDate(resolvedPeriod.startDate)
+      setProjEndDate(resolvedPeriod.endDate)
+    } else {
+      setProjStartDate(toDateStr(new Date()))
+      setProjEndDate(`${year}-12-31`)
+    }
     const activeSlots = planningData.periodSlots.find(ps => ps.period.id === resolvedPeriodId)
     const all = (activeSlots?.semSlots ?? []) as DBSlot[]
     setSlotsA(all.filter(s => s.week_type === 'A').map(dbToPlanner))
     setSlotsB(all.filter(s => s.week_type === 'B').map(dbToPlanner))
+    // Conservé pour le bouton "Copier depuis le planning de base" (utile
+    // quand on édite une période différente de la base, pour ne pas repartir
+    // d'une grille vide).
+    const baseAll = (planningData.periodSlots.find(ps => ps.period.id === planningData.basePeriodId)?.semSlots ?? []) as DBSlot[]
+    setBaseSlotsA(baseAll.filter(s => s.week_type === 'A').map(dbToPlanner))
+    setBaseSlotsB(baseAll.filter(s => s.week_type === 'B').map(dbToPlanner))
     // Taux de cotisation 6e semaine - la base fait foi (Prompt 3, plus de
     // lecture localStorage ici, cf. migration douce dans ReplacementPage.tsx)
     const cm: Record<string, number> = {}
@@ -149,6 +171,23 @@ export default function SemaineTypePage() {
     if (wt === 'A') setSlotsA(slots)
     else setSlotsB(slots)
     scheduleSave(wt, slots)
+    setProjDone(false)
+  }
+
+  function copyFromBase() {
+    if (slotsA.length > 0 || slotsB.length > 0) {
+      if (!confirm('Cette période contient déjà des horaires — les remplacer par ceux du planning de base ?')) return
+    }
+    setCopyingBase(true)
+    // Nouveaux ids locaux : ce ne sont que des clés React, jamais envoyées en
+    // base (scheduleSave reconstruit chaque ligne sans l'id côté insert).
+    const cloneA = baseSlotsA.map((s, i) => ({ ...s, id: `copy_a_${i}_${Date.now()}` }))
+    const cloneB = baseSlotsB.map((s, i) => ({ ...s, id: `copy_b_${i}_${Date.now()}` }))
+    setSlotsA(cloneA)
+    setSlotsB(cloneB)
+    scheduleSave('A', cloneA)
+    scheduleSave('B', cloneB)
+    setCopyingBase(false)
     setProjDone(false)
   }
 
@@ -321,7 +360,22 @@ export default function SemaineTypePage() {
     <div className="min-h-full bg-slate-50">
       <div className="bg-white border-b border-slate-200 px-8 py-4 sticky top-0 z-30 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-slate-800">Semaine Type</h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-lg font-bold text-slate-800">Semaine Type</h1>
+            {(() => {
+              const current = periods.find(p => p.id === periodId)
+              if (!current) return null
+              return current.isBase ? (
+                <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
+                  Planning de base
+                </span>
+              ) : (
+                <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-full">
+                  Période : {current.label} ({current.startDate} → {current.endDate})
+                </span>
+              )
+            })()}
+          </div>
           <p className="text-xs text-slate-400">Définissez les horaires habituels — semaine A ({isoRuleLabel.A}) et B ({isoRuleLabel.B})</p>
         </div>
         <div className="flex items-center gap-3">
@@ -340,6 +394,12 @@ export default function SemaineTypePage() {
               {periods.filter(p => p.isBase).map(p => <option key={p.id} value="">{p.label}</option>)}
               {periods.filter(p => !p.isBase).map(p => <option key={p.id} value={p.id}>{p.label} ({p.startDate} → {p.endDate})</option>)}
             </select>
+          )}
+          {periodId && basePeriodId && periodId !== basePeriodId && (
+            <button onClick={copyFromBase} disabled={copyingBase}
+              className="text-xs font-semibold border border-indigo-200 rounded-lg px-3 py-2 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40 transition-colors">
+              ↺ Copier depuis le planning de base
+            </button>
           )}
           {saving && <div className="flex items-center gap-2 text-xs text-slate-400"><div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-indigo-400 rounded-full animate-spin" />Enregistrement…</div>}
         </div>
