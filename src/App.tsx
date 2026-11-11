@@ -10,6 +10,7 @@ import PlanningPage from './pages/PlanningPage'
 import CalcAnnuelPage from './pages/CalcAnnuelPage'
 import CongesPage from './pages/CongesPage'
 import RhRulesPage from './pages/RhRulesPage'
+import PeriodesPage from './pages/PeriodesPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthStore()
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="regles-rh" element={<RhRulesPage />} />
           <Route path="remplacement" element={<ReplacementPage />} />
           <Route path="semaine-type" element={<SemaineTypePage />} />
+          <Route path="periodes" element={<PeriodesPage />} />
           <Route path="planning" element={<PlanningPage />} />
           <Route path="calcul-annuel" element={<CalcAnnuelPage />} />
           <Route path="conges" element={<CongesPage />} />

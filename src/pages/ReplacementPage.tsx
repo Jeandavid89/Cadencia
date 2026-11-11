@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import WeekPlanner, { EMP_COLORS, type PlannerSlot, type PlannerEmployee } from '../components/WeekPlanner'
 import { countYearWeeks, defaultRefMonday, getYearWeekMondays } from '../lib/weekUtils'
-import { countPeriodWeeks } from '../lib/periods'
+import { countPeriodWeeks, type PlanningPeriod } from '../lib/periods'
 import { loadPlanningData } from '../lib/planningData'
 
 interface Employee {
@@ -29,6 +29,8 @@ export default function ReplacementPage() {
   const { user } = useAuthStore()
   const companyId = user?.id ?? ''
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedPeriodId = searchParams.get('period')
 
   const currentYear = new Date().getFullYear()
 
@@ -39,8 +41,9 @@ export default function ReplacementPage() {
   const [yearWeeks, setYearWeeks] = useState<{ nA: number; nB: number; total: number }>(() =>
     countYearWeeks(new Date().getFullYear(), defaultRefMonday(new Date().getFullYear()))
   )
-  // Période éditée - la base tant qu'aucun sélecteur de période n'existe (Prompt 11)
+  // Période éditée - la base par défaut, ou celle passée dans ?period=<id>
   const [periodId, setPeriodId] = useState<string | null>(null)
+  const [periods, setPeriods] = useState<PlanningPeriod[]>([])
 
   // Pour chaque employé absent : ses slots de remplacement
   const [planSlots, setPlanSlots] = useState<Record<string, PlannerSlot[]>>({})
@@ -70,17 +73,21 @@ export default function ReplacementPage() {
           .eq('company_id', companyId).eq('active', true).order('sort_order'),
         loadPlanningData(companyId),
       ])
-      const replSlots = planningData.replSlots
-      setPeriodId(planningData.basePeriodId)
+      setPeriods(planningData.periods)
+      // La période demandée (?period=) si elle existe toujours, sinon la base.
+      const resolvedPeriodId = requestedPeriodId && planningData.periods.some(p => p.id === requestedPeriodId)
+        ? requestedPeriodId
+        : planningData.basePeriodId
+      setPeriodId(resolvedPeriodId)
+      const replSlots = planningData.periodSlots.find(ps => ps.period.id === resolvedPeriodId)?.replSlots ?? []
       if (co) {
         setSixthWeek(co.sixth_week)
         const year = new Date().getFullYear()
         const ref = co.reference_week_date
           ? new Date(co.reference_week_date + 'T12:00:00')
           : defaultRefMonday(year)
-        // Semaines rattachées à la période éditée (la base pour l'instant,
-        // Prompt 11 ajoutera un sélecteur) - pas countYearWeeks (toute l'année).
-        setYearWeeks(countPeriodWeeks(getYearWeekMondays(year), planningData.periods, planningData.basePeriodId, ref))
+        // Semaines rattachées à la période effectivement éditée, pas à toute l'année.
+        setYearWeeks(countPeriodWeeks(getYearWeekMondays(year), planningData.periods, resolvedPeriodId, ref))
       }
       if (emps) {
         setEmployees(emps)
@@ -122,7 +129,7 @@ export default function ReplacementPage() {
             // existe sur cet appareil, proposer de le pousser en base.
             const year = new Date().getFullYear()
             const { data: existingCaps } = await supabase.from('week_targets')
-              .select('sixth_week_cap_min').eq('company_id', companyId).eq('year', year)
+              .select('sixth_week_cap_min').eq('company_id', companyId).eq('year', year).eq('period_id', resolvedPeriodId)
               .not('sixth_week_cap_min', 'is', null)
             if (!existingCaps || existingCaps.length === 0) setNeedsCapSync(true)
           }
@@ -131,7 +138,7 @@ export default function ReplacementPage() {
       setLoaded(true)
     }
     load()
-  }, [companyId])
+  }, [companyId, requestedPeriodId])
 
   async function syncCapToDb() {
     if (!periodId) return
@@ -339,6 +346,22 @@ export default function ReplacementPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-bold text-slate-800">Remplacement & Lissage</h1>
+            {periods.length > 1 && (
+              <select
+                value={periodId ?? ''}
+                onChange={e => {
+                  const v = e.target.value
+                  setSearchParams(prev => {
+                    const next = new URLSearchParams(prev)
+                    if (v) next.set('period', v); else next.delete('period')
+                    return next
+                  })
+                }}
+                className="text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200">
+                {periods.filter(p => p.isBase).map(p => <option key={p.id} value="">{p.label}</option>)}
+                {periods.filter(p => !p.isBase).map(p => <option key={p.id} value={p.id}>{p.label} ({p.startDate} → {p.endDate})</option>)}
+              </select>
+            )}
             {saving && <span className="text-xs text-slate-400 animate-pulse">Sauvegarde…</span>}
           </div>
           {!computed && (

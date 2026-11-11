@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef, useCallback, Fragment } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import WeekPlanner, { EMP_COLORS, eff, type PlannerSlot, type PlannerEmployee } from '../components/WeekPlanner'
 import { getWeekType, defaultRefMonday, toDateStr } from '../lib/weekUtils'
 import { loadPlanningData } from '../lib/planningData'
+import { slotsForDate } from '../lib/bilanCalc'
+import type { PlanningPeriod } from '../lib/periods'
 
 function getISOWeek(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -42,6 +45,8 @@ const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven']
 export default function SemaineTypePage() {
   const { user } = useAuthStore()
   const companyId = user?.id ?? ''
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedPeriodId = searchParams.get('period')
 
   const [employees, setEmployees] = useState<Employee[]>([])
   const [targets, setTargets] = useState<WeekTarget[]>([])
@@ -58,8 +63,9 @@ export default function SemaineTypePage() {
   const [projDone, setProjDone] = useState(false)
   const [refMonday, setRefMonday] = useState<Date>(() => defaultRefMonday(new Date().getFullYear()))
   const [isoRuleLabel, setIsoRuleLabel] = useState<{ A: string; B: string }>({ A: 'sem. ISO paires', B: 'sem. ISO impaires' })
-  // Période éditée - la base tant qu'aucun sélecteur de période n'existe (Prompt 11)
+  // Période éditée - la base par défaut, ou celle passée dans ?period=<id>
   const [periodId, setPeriodId] = useState<string | null>(null)
+  const [periods, setPeriods] = useState<PlanningPeriod[]>([])
 
   const saveTimers = useRef<{ A: ReturnType<typeof setTimeout> | null; B: ReturnType<typeof setTimeout> | null }>({ A: null, B: null })
   const stateRef = useRef({ A: slotsA, B: slotsB, employees, holidays })
@@ -87,8 +93,14 @@ export default function SemaineTypePage() {
     if (emps) setEmployees(emps)
     if (tgts) setTargets(tgts)
     if (hols) setHolidays((hols as { date: string }[]).map(h => h.date))
-    setPeriodId(planningData.basePeriodId)
-    const all = planningData.semSlots as DBSlot[]
+    setPeriods(planningData.periods)
+    // La période demandée (?period=) si elle existe toujours, sinon la base.
+    const resolvedPeriodId = requestedPeriodId && planningData.periods.some(p => p.id === requestedPeriodId)
+      ? requestedPeriodId
+      : planningData.basePeriodId
+    setPeriodId(resolvedPeriodId)
+    const activeSlots = planningData.periodSlots.find(ps => ps.period.id === resolvedPeriodId)
+    const all = (activeSlots?.semSlots ?? []) as DBSlot[]
     setSlotsA(all.filter(s => s.week_type === 'A').map(dbToPlanner))
     setSlotsB(all.filter(s => s.week_type === 'B').map(dbToPlanner))
     // Taux de cotisation 6e semaine - la base fait foi (Prompt 3, plus de
@@ -99,7 +111,7 @@ export default function SemaineTypePage() {
     }
     setCapMap(cm)
     setLoaded(true)
-  }, [companyId])
+  }, [companyId, requestedPeriodId])
 
   useEffect(() => { if (companyId) load() }, [companyId, load])
 
@@ -143,7 +155,7 @@ export default function SemaineTypePage() {
   async function project() {
     if (!projStartDate || !projEndDate) return
     setProjecting(true); setProjDone(false)
-    const { A, B, employees: emps, holidays: hols } = stateRef.current
+    const { employees: emps, holidays: hols } = stateRef.current
     const start = getMondayOf(new Date(projStartDate + 'T00:00:00'))
     const end = new Date(projEndDate + 'T23:59:59')
     const holSet = new Set(hols)
@@ -160,10 +172,10 @@ export default function SemaineTypePage() {
       loadPlanningData(companyId),
     ])
     const leaveSet = new Set((leaveData ?? []).map(s => `${s.employee_id}|${s.date}`))
-    // TODO (Prompt 11) : résoudre la période active par jour projeté plutôt
-    // que de prendre la vue à plat (comportement actuel, inchangé tant
-    // qu'aucune période datée n'existe).
-    const replCfg = planningData.replSlots
+    // La semaine type et les remplacements effectivement projetés sont résolus
+    // jour par jour (slotsForDate) selon la période active à CETTE date, pas
+    // celle affichée à l'écran - une projection peut traverser plusieurs
+    // périodes.
 
     const weekCur = new Date(start)
     while (weekCur <= end) {
@@ -184,11 +196,12 @@ export default function SemaineTypePage() {
         if (jsDay < 1 || jsDay > 5) continue
         const ds = toDateStr(day)
         if (holSet.has(ds)) continue
+        const dayReplSlots = slotsForDate(planningData.periodSlots, day).replSlots
         for (const emp of emps) {
           if (leaveSet.has(`${emp.id}|${ds}`)) {
             if (!absentByDay.has(jsDay)) absentByDay.set(jsDay, new Set())
             absentByDay.get(jsDay)!.add(emp.id)
-            for (const rs of replCfg.filter(r => r.absent_employee_id === emp.id && r.day_of_week === jsDay)) {
+            for (const rs of dayReplSlots.filter(r => r.absent_employee_id === emp.id && r.day_of_week === jsDay)) {
               if (!leaveSet.has(`${rs.present_employee_id}|${ds}`)) {
                 replacingSet.add(`${rs.present_employee_id}|${ds}`)
               }
@@ -206,7 +219,7 @@ export default function SemaineTypePage() {
         if (jsDay < 1 || jsDay > 5) continue
         const ds = toDateStr(day)
         const wt: 'A' | 'B' = getWeekType(day, refMonday)
-        const typeSlots = wt === 'A' ? A : B
+        const { semSlots: daySemSlots, replSlots: dayReplSlots } = slotsForDate(planningData.periodSlots, day)
         if (holSet.has(ds)) {
           for (const emp of emps) {
             if (!leaveSet.has(`${emp.id}|${ds}`)) {
@@ -218,15 +231,15 @@ export default function SemaineTypePage() {
             const key = `${emp.id}|${ds}`
             if (leaveSet.has(key)) continue // absente : son slot leave_week survit au delete
             if (replacingSet.has(key)) continue // remplaçante : ajoutée juste après
-            for (const ts of typeSlots.filter(s => s.employee_id === emp.id && s.day === jsDay)) {
-              rows.push({ company_id: companyId, employee_id: emp.id, date: ds, start_minutes: ts.start_min, end_minutes: ts.end_min, break_minutes: ts.break_min, slot_type: ts.is_formation ? 'formation' : 'work' })
+            for (const ts of daySemSlots.filter(s => s.employee_id === emp.id && s.week_type === wt && s.day_of_week === jsDay)) {
+              rows.push({ company_id: companyId, employee_id: emp.id, date: ds, start_minutes: ts.start_minutes, end_minutes: ts.end_minutes, break_minutes: ts.break_minutes, slot_type: ts.is_formation ? 'formation' : 'work' })
             }
           }
           // Slots de remplacement pour ce jour
           const absents = absentByDay.get(jsDay)
           if (absents) {
             for (const absentId of absents) {
-              for (const rs of replCfg.filter(r => r.absent_employee_id === absentId && r.day_of_week === jsDay)) {
+              for (const rs of dayReplSlots.filter(r => r.absent_employee_id === absentId && r.day_of_week === jsDay)) {
                 if (!leaveSet.has(`${rs.present_employee_id}|${ds}`)) {
                   rows.push({ company_id: companyId, employee_id: rs.present_employee_id, date: ds, start_minutes: rs.start_minutes, end_minutes: rs.end_minutes, break_minutes: rs.break_minutes, slot_type: rs.is_formation ? 'formation' : 'work' })
                 }
@@ -311,7 +324,25 @@ export default function SemaineTypePage() {
           <h1 className="text-lg font-bold text-slate-800">Semaine Type</h1>
           <p className="text-xs text-slate-400">Définissez les horaires habituels — semaine A ({isoRuleLabel.A}) et B ({isoRuleLabel.B})</p>
         </div>
-        {saving && <div className="flex items-center gap-2 text-xs text-slate-400"><div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-indigo-400 rounded-full animate-spin" />Enregistrement…</div>}
+        <div className="flex items-center gap-3">
+          {periods.length > 1 && (
+            <select
+              value={periodId ?? ''}
+              onChange={e => {
+                const v = e.target.value
+                setSearchParams(prev => {
+                  const next = new URLSearchParams(prev)
+                  if (v) next.set('period', v); else next.delete('period')
+                  return next
+                })
+              }}
+              className="text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2 text-slate-600 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200">
+              {periods.filter(p => p.isBase).map(p => <option key={p.id} value="">{p.label}</option>)}
+              {periods.filter(p => !p.isBase).map(p => <option key={p.id} value={p.id}>{p.label} ({p.startDate} → {p.endDate})</option>)}
+            </select>
+          )}
+          {saving && <div className="flex items-center gap-2 text-xs text-slate-400"><div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-indigo-400 rounded-full animate-spin" />Enregistrement…</div>}
+        </div>
       </div>
 
       <div className="p-8 max-w-6xl space-y-6">
