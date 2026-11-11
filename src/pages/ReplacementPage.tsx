@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import WeekPlanner, { EMP_COLORS, type PlannerSlot, type PlannerEmployee } from '../components/WeekPlanner'
 import { countYearWeeks, defaultRefMonday } from '../lib/weekUtils'
+import { loadPlanningData } from '../lib/planningData'
 
 interface Employee {
   id: string; first_name: string; last_name: string
@@ -37,6 +38,8 @@ export default function ReplacementPage() {
   const [yearWeeks, setYearWeeks] = useState<{ nA: number; nB: number; total: number }>(() =>
     countYearWeeks(new Date().getFullYear(), defaultRefMonday(new Date().getFullYear()))
   )
+  // Période éditée - la base tant qu'aucun sélecteur de période n'existe (Prompt 11)
+  const [periodId, setPeriodId] = useState<string | null>(null)
 
   // Pour chaque employé absent : ses slots de remplacement
   const [planSlots, setPlanSlots] = useState<Record<string, PlannerSlot[]>>({})
@@ -59,15 +62,15 @@ export default function ReplacementPage() {
   useEffect(() => {
     if (!companyId) return
     async function load() {
-      const [{ data: co }, { data: emps }, { data: replSlots }] = await Promise.all([
+      const [{ data: co }, { data: emps }, planningData] = await Promise.all([
         supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
         supabase.from('employees')
           .select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_minutes_per_year,leave_weeks_per_year,color_index')
           .eq('company_id', companyId).eq('active', true).order('sort_order'),
-        supabase.from('replacement_slots')
-          .select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation')
-          .eq('company_id', companyId),
+        loadPlanningData(companyId),
       ])
+      const replSlots = planningData.replSlots
+      setPeriodId(planningData.basePeriodId)
       if (co) {
         setSixthWeek(co.sixth_week)
         const year = new Date().getFullYear()
@@ -143,6 +146,7 @@ export default function ReplacementPage() {
   }
 
   function handleSlotsChange(absentId: string, newSlots: PlannerSlot[]) {
+    if (!periodId) return // chargement pas encore terminé
     setPlanSlots(p => ({ ...p, [absentId]: newSlots }))
     setStale(true)
 
@@ -150,8 +154,11 @@ export default function ReplacementPage() {
     setSaving(true)
     saveTimers.current[absentId] = setTimeout(async () => {
       try {
+        // Portée au period_id édité : ne touche jamais les remplacements des
+        // autres périodes pour cet absent (Prompt 7+8, préparation des
+        // périodes).
         const { error: delErr } = await supabase.from('replacement_slots').delete()
-          .eq('company_id', companyId).eq('absent_employee_id', absentId)
+          .eq('company_id', companyId).eq('absent_employee_id', absentId).eq('period_id', periodId)
         if (delErr) throw delErr
         if (newSlots.length > 0) {
           const { error: insErr } = await supabase.from('replacement_slots').insert(newSlots.map(s => ({
@@ -163,6 +170,7 @@ export default function ReplacementPage() {
             end_minutes: s.end_min,
             break_minutes: s.break_min,
             is_formation: s.is_formation ?? false,
+            period_id: periodId,
           })))
           if (insErr) throw insErr
         }

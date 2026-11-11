@@ -7,6 +7,7 @@ import WeekPlanner, { EMP_COLORS, eff, type PlannerSlot, type PlannerEmployee, t
 import ExportPanel from '../components/ExportPanel'
 import { getWeekType, defaultRefMonday, toDateStr } from '../lib/weekUtils'
 import { computeSimplifiedBilan } from '../lib/bilanCalc'
+import { loadPlanningData } from '../lib/planningData'
 
 // ─── helpers ISO week ───
 function getISOWeek(date: Date): number {
@@ -85,32 +86,29 @@ export default function PlanningPage() {
     if (!companyId) return
     async function init() {
       const year = new Date().getFullYear()
-      const [{ data: emps }, { data: tgts }, { data: hols }, { data: stSlots }, { data: replData }, { data: co }] = await Promise.all([
+      const [{ data: emps }, { data: tgts }, { data: hols }, planningData, { data: co }] = await Promise.all([
         supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,color_index').eq('company_id', companyId).eq('active', true).order('sort_order'),
         supabase.from('week_targets').select('employee_id,sem_a_minutes,sem_b_minutes').eq('company_id', companyId).eq('year', year),
         supabase.from('public_holidays').select('date,name').eq('company_id', companyId).eq('year', year),
-        supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes').eq('company_id', companyId),
-        supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes').eq('company_id', companyId),
+        loadPlanningData(companyId),
         supabase.from('companies').select('reference_week_date').eq('id', companyId).single(),
       ])
       const refStr = (co)?.reference_week_date as string | null
       setRefMonday(refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year))
       if (tgts) setTargets(tgts)
       if (hols) setHolidays(hols)
-      if (replData) setReplConfig(replData)
+      setReplConfig(planningData.replSlots)
       if (emps) {
         setEmployees(emps)
         // Initialiser stRef : heures par jour pour chaque employé/semaine type
+        // TODO (Prompt 9) : résoudre par période/date au lieu de la vue à plat.
         const emptyDays = () => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 })
         const ref: Record<string, Record<'A' | 'B', Record<number, number>>> = {}
         emps.forEach(e => { ref[e.id] = { A: emptyDays(), B: emptyDays() } })
-        if (stSlots) {
-          ;(stSlots as { employee_id: string; week_type: string; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number }[])
-            .forEach(s => {
-              if (ref[s.employee_id]) {
-                ref[s.employee_id][s.week_type as 'A' | 'B'][s.day_of_week] += Math.max(0, s.end_minutes - s.start_minutes - s.break_minutes)
-              }
-            })
+        for (const s of planningData.semSlots) {
+          if (ref[s.employee_id]) {
+            ref[s.employee_id][s.week_type][s.day_of_week] += Math.max(0, s.end_minutes - s.start_minutes - s.break_minutes)
+          }
         }
         setStRef(ref)
       }
@@ -406,12 +404,11 @@ export default function PlanningPage() {
     const year = new Date().getFullYear()
     const from = `${year}-01-01`
     const to = `${year}-12-31`
-    const [{ data: emps }, { data: hols }, { data: stSlots }, { data: leaveSlots }, { data: replSlotsData }, { data: carries }, { data: coData }, { data: capRows }] = await Promise.all([
+    const [{ data: emps }, { data: hols }, planningData, { data: leaveSlots }, { data: carries }, { data: coData }, { data: capRows }] = await Promise.all([
       supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year').eq('company_id', companyId).eq('active', true).order('sort_order'),
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
-      supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
+      loadPlanningData(companyId),
       supabase.from('planning_slots').select('employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_week','leave_day','leave_partial']),
-      supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
       supabase.from('annual_carryover').select('employee_id,carryover_minutes,carryover_leave_minutes').eq('company_id', companyId).eq('year', year - 1),
       supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
       supabase.from('week_targets').select('employee_id,sixth_week_cap_min').eq('company_id', companyId).eq('year', year),
@@ -421,9 +418,9 @@ export default function PlanningPage() {
     const refStr = (coData)?.reference_week_date as string | null
     const ref = refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year)
     const holSet = new Set(((hols ?? []) as { date: string }[]).map(h => h.date))
-    const semSlots = (stSlots ?? []) as { employee_id: string; week_type: 'A'|'B'; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
+    const semSlots = planningData.semSlots
     const lSlots = (leaveSlots ?? []) as { employee_id: string; date: string; slot_type: string; start_minutes?: number | null; end_minutes?: number | null }[]
-    const rSlots = (replSlotsData ?? []) as { absent_employee_id: string; present_employee_id: string; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number; is_formation: boolean }[]
+    const rSlots = planningData.replSlots
     // Taux de cotisation 6e semaine - la base fait foi (Prompt 3, plus de
     // lecture localStorage ici, cf. migration douce dans ReplacementPage.tsx)
     const capMap: Record<string, number> = {}

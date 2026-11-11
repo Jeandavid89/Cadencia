@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import { getWeekType, defaultRefMonday } from '../lib/weekUtils'
+import { loadPlanningData } from '../lib/planningData'
 
 interface Employee {
   id: string; first_name: string; last_name: string
@@ -70,17 +71,17 @@ export default function CongesPage() {
   const load = useCallback(async () => {
     setLoaded(false)
     const from = `${year}-01-01`, to = `${year}-12-31`
-    const [{ data: emps }, { data: ls }, { data: ss }, { data: hols }, { data: co }, { data: capRows }] = await Promise.all([
+    const [{ data: emps }, { data: ls }, planningData, { data: hols }, { data: co }, { data: capRows }] = await Promise.all([
       supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year,color_index').eq('company_id', companyId).eq('active', true).order('sort_order'),
       supabase.from('planning_slots').select('id,employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_day', 'leave_week', 'leave_partial']),
-      supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
+      loadPlanningData(companyId),
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
       supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
       supabase.from('week_targets').select('employee_id,sixth_week_cap_min').eq('company_id', companyId).eq('year', year),
     ])
     setEmployees((emps ?? []) as Employee[])
     setLeaveSlots((ls ?? []) as LeaveSlot[])
-    setSemSlots((ss ?? []) as SemaineTypeSlot[])
+    setSemSlots(planningData.semSlots)
     setHolidays((hols ?? []) as PublicHoliday[])
     setSixthWeek((co)?.sixth_week ?? false)
     const refStr = (co)?.reference_week_date as string | null

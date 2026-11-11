@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import { getWeekType, defaultRefMonday, toDateStr, getMondayOf, getYearWeekMondays } from '../lib/weekUtils'
 import { computeSoldeLive } from '../lib/bilanUtils'
+import { loadPlanningData } from '../lib/planningData'
 
 interface Employee {
   id: string; first_name: string; last_name: string
@@ -116,12 +117,11 @@ export default function CalcAnnuelPage() {
     const from = `${year}-01-01`
     const to = `${year}-12-31`
 
-    const [{ data: emps }, { data: hols }, { data: stSlots }, { data: leaveSlotsRaw }, { data: replSlotsRaw }, { data: carryovers }, { data: co }, { data: capRows }, { data: ownClosure }] = await Promise.all([
+    const [{ data: emps }, { data: hols }, planningData, { data: leaveSlotsRaw }, { data: carryovers }, { data: co }, { data: capRows }, { data: ownClosure }] = await Promise.all([
       supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year').eq('company_id', companyId).eq('active', true).order('sort_order'),
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
-      supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
+      loadPlanningData(companyId),
       supabase.from('planning_slots').select('employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_week', 'leave_day', 'leave_partial']),
-      supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
       supabase.from('annual_carryover').select('employee_id,carryover_minutes,carryover_leave_minutes').eq('company_id', companyId).eq('year', year - 1),
       supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
       supabase.from('week_targets').select('employee_id,sixth_week_cap_min').eq('company_id', companyId).eq('year', year),
@@ -138,9 +138,9 @@ export default function CalcAnnuelPage() {
 
     const employees = emps as Employee[]
     const holSet = new Set(((hols ?? []) as { date: string }[]).map(h => h.date))
-    const semSlots = (stSlots ?? []) as SemaineTypeSlot[]
+    const semSlots = planningData.semSlots as SemaineTypeSlot[]
     const leaveSlots = (leaveSlotsRaw ?? []) as LeaveSlot[]
-    const replSlots = (replSlotsRaw ?? []) as ReplacementSlot[]
+    const replSlots = planningData.replSlots as ReplacementSlot[]
     const carries = (carryovers ?? []) as Carryover[]
 
     // Taux de cotisation 6e semaine (pour cap congés) - la base fait foi

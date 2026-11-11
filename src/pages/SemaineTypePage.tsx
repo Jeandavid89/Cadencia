@@ -4,6 +4,7 @@ import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import WeekPlanner, { EMP_COLORS, eff, type PlannerSlot, type PlannerEmployee } from '../components/WeekPlanner'
 import { getWeekType, defaultRefMonday, toDateStr } from '../lib/weekUtils'
+import { loadPlanningData } from '../lib/planningData'
 
 function getISOWeek(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -57,6 +58,8 @@ export default function SemaineTypePage() {
   const [projDone, setProjDone] = useState(false)
   const [refMonday, setRefMonday] = useState<Date>(() => defaultRefMonday(new Date().getFullYear()))
   const [isoRuleLabel, setIsoRuleLabel] = useState<{ A: string; B: string }>({ A: 'sem. ISO paires', B: 'sem. ISO impaires' })
+  // Période éditée - la base tant qu'aucun sélecteur de période n'existe (Prompt 11)
+  const [periodId, setPeriodId] = useState<string | null>(null)
 
   const saveTimers = useRef<{ A: ReturnType<typeof setTimeout> | null; B: ReturnType<typeof setTimeout> | null }>({ A: null, B: null })
   const stateRef = useRef({ A: slotsA, B: slotsB, employees, holidays })
@@ -64,10 +67,10 @@ export default function SemaineTypePage() {
 
   const load = useCallback(async () => {
     const year = new Date().getFullYear()
-    const [{ data: emps }, { data: tgts }, { data: dbSlots }, { data: hols }, { data: co }] = await Promise.all([
+    const [{ data: emps }, { data: tgts }, planningData, { data: hols }, { data: co }] = await Promise.all([
       supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,color_index').eq('company_id', companyId).eq('active', true).order('sort_order'),
       supabase.from('week_targets').select('employee_id,sem_a_minutes,sem_b_minutes,sixth_week_cap_min').eq('company_id', companyId).eq('year', year),
-      supabase.from('semaine_type_slots').select('id,employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
+      loadPlanningData(companyId),
       supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
       supabase.from('companies').select('reference_week_date').eq('id', companyId).single(),
     ])
@@ -84,11 +87,10 @@ export default function SemaineTypePage() {
     if (emps) setEmployees(emps)
     if (tgts) setTargets(tgts)
     if (hols) setHolidays((hols as { date: string }[]).map(h => h.date))
-    if (dbSlots) {
-      const all = dbSlots as DBSlot[]
-      setSlotsA(all.filter(s => s.week_type === 'A').map(dbToPlanner))
-      setSlotsB(all.filter(s => s.week_type === 'B').map(dbToPlanner))
-    }
+    setPeriodId(planningData.basePeriodId)
+    const all = planningData.semSlots as DBSlot[]
+    setSlotsA(all.filter(s => s.week_type === 'A').map(dbToPlanner))
+    setSlotsB(all.filter(s => s.week_type === 'B').map(dbToPlanner))
     // Taux de cotisation 6e semaine - la base fait foi (Prompt 3, plus de
     // lecture localStorage ici, cf. migration douce dans ReplacementPage.tsx)
     const cm: Record<string, number> = {}
@@ -102,18 +104,22 @@ export default function SemaineTypePage() {
   useEffect(() => { if (companyId) load() }, [companyId, load])
 
   const scheduleSave = useCallback((weekType: 'A' | 'B', slots: PlannerSlot[]) => {
+    if (!periodId) return // chargement pas encore terminé
     if (saveTimers.current[weekType]) clearTimeout(saveTimers.current[weekType]!)
     setSaving(true)
     saveTimers.current[weekType] = setTimeout(async () => {
       try {
+        // Portée au period_id édité : ne touche jamais les slots des autres
+        // périodes du même week_type (Prompt 7+8, préparation des périodes).
         const { error: delErr } = await supabase.from('semaine_type_slots')
-          .delete().eq('company_id', companyId).eq('week_type', weekType)
+          .delete().eq('company_id', companyId).eq('week_type', weekType).eq('period_id', periodId)
         if (delErr) throw delErr
         if (slots.length > 0) {
           const { error: insErr } = await supabase.from('semaine_type_slots').insert(slots.map(s => ({
             company_id: companyId, employee_id: s.employee_id, week_type: weekType,
             day_of_week: s.day, start_minutes: s.start_min, end_minutes: s.end_min,
             break_minutes: s.break_min, is_formation: s.is_formation ?? false,
+            period_id: periodId,
           })))
           if (insErr) throw insErr
         }
@@ -125,7 +131,7 @@ export default function SemaineTypePage() {
         setSaving(false)
       }
     }, 800)
-  }, [companyId])
+  }, [companyId, periodId])
 
   function handleChange(wt: 'A' | 'B', slots: PlannerSlot[]) {
     if (wt === 'A') setSlotsA(slots)
@@ -145,18 +151,19 @@ export default function SemaineTypePage() {
     const endStr = toDateStr(end)
 
     // Charger les congés existants + config remplacements
-    const [{ data: leaveData }, { data: replData }] = await Promise.all([
+    const [{ data: leaveData }, planningData] = await Promise.all([
       supabase.from('planning_slots')
         .select('employee_id,date')
         .eq('company_id', companyId)
         .gte('date', startStr).lte('date', endStr)
         .in('slot_type', ['leave_week', 'leave_day']),
-      supabase.from('replacement_slots')
-        .select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation')
-        .eq('company_id', companyId),
+      loadPlanningData(companyId),
     ])
     const leaveSet = new Set((leaveData ?? []).map(s => `${s.employee_id}|${s.date}`))
-    const replCfg = replData ?? []
+    // TODO (Prompt 11) : résoudre la période active par jour projeté plutôt
+    // que de prendre la vue à plat (comportement actuel, inchangé tant
+    // qu'aucune période datée n'existe).
+    const replCfg = planningData.replSlots
 
     const weekCur = new Date(start)
     while (weekCur <= end) {

@@ -1,18 +1,18 @@
 import { supabase } from './supabase'
 import { getWeekType, defaultRefMonday, getMondayOf, toDateStr } from './weekUtils'
-import { eff, computeSimplifiedBilan, type SemaineTypeSlot, type LeaveSlot, type ReplacementSlot } from './bilanCalc'
+import { eff, computeSimplifiedBilan, type LeaveSlot } from './bilanCalc'
+import { loadPlanningData } from './planningData'
 
 export async function computeSoldeLive(companyId: string): Promise<Record<string, number>> {
   const year = new Date().getFullYear()
   const from = `${year}-01-01`
   const to = `${year}-12-31`
 
-  const [{ data: emps }, { data: hols }, { data: stSlots }, { data: leaveSlots }, { data: replSlotsData }, { data: coData }, { data: carryData }] = await Promise.all([
+  const [{ data: emps }, { data: hols }, planningData, { data: leaveSlots }, { data: coData }, { data: carryData }] = await Promise.all([
     supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,formation_minutes_per_week,leave_weeks_per_year').eq('company_id', companyId).eq('active', true).order('sort_order'),
     supabase.from('public_holidays').select('date').eq('company_id', companyId).eq('year', year),
-    supabase.from('semaine_type_slots').select('employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
+    loadPlanningData(companyId),
     supabase.from('planning_slots').select('employee_id,date,slot_type,start_minutes,end_minutes').eq('company_id', companyId).gte('date', from).lte('date', to).in('slot_type', ['leave_week', 'leave_day', 'leave_partial']),
-    supabase.from('replacement_slots').select('absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation').eq('company_id', companyId),
     supabase.from('companies').select('reference_week_date').eq('id', companyId).single(),
     supabase.from('annual_carryover').select('employee_id,carryover_minutes').eq('company_id', companyId).eq('year', year - 1),
   ])
@@ -22,9 +22,9 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
   const refStr = (coData)?.reference_week_date as string | null
   const ref = refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year)
 
-  const semSlots = (stSlots ?? []) as SemaineTypeSlot[]
+  const semSlots = planningData.semSlots
   const lSlots = (leaveSlots ?? []) as LeaveSlot[]
-  const rSlots = (replSlotsData ?? []) as ReplacementSlot[]
+  const rSlots = planningData.replSlots
   const carryMap: Record<string, { carryover_minutes: number; carryover_leave_minutes: number }> = {}
   for (const c of (carryData ?? []) as { employee_id: string; carryover_minutes: number }[]) carryMap[c.employee_id] = { carryover_minutes: c.carryover_minutes, carryover_leave_minutes: 0 }
 
