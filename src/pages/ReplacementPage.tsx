@@ -4,7 +4,8 @@ import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import WeekPlanner, { EMP_COLORS, type PlannerSlot, type PlannerEmployee } from '../components/WeekPlanner'
-import { countYearWeeks, defaultRefMonday } from '../lib/weekUtils'
+import { countYearWeeks, defaultRefMonday, getYearWeekMondays } from '../lib/weekUtils'
+import { countPeriodWeeks } from '../lib/periods'
 import { loadPlanningData } from '../lib/planningData'
 
 interface Employee {
@@ -77,7 +78,9 @@ export default function ReplacementPage() {
         const ref = co.reference_week_date
           ? new Date(co.reference_week_date + 'T12:00:00')
           : defaultRefMonday(year)
-        setYearWeeks(countYearWeeks(year, ref))
+        // Semaines rattachées à la période éditée (la base pour l'instant,
+        // Prompt 11 ajoutera un sélecteur) - pas countYearWeeks (toute l'année).
+        setYearWeeks(countPeriodWeeks(getYearWeekMondays(year), planningData.periods, planningData.basePeriodId, ref))
       }
       if (emps) {
         setEmployees(emps)
@@ -131,15 +134,17 @@ export default function ReplacementPage() {
   }, [companyId])
 
   async function syncCapToDb() {
+    if (!periodId) return
     setSyncingCap(true)
     const year = new Date().getFullYear()
     const capRows = results.map(r => ({
       company_id: companyId,
       employee_id: r.id,
       year,
+      period_id: periodId,
       sixth_week_cap_min: r.normalWeeks > 0 ? r.sixthWkMin / r.normalWeeks : 0,
     }))
-    const { error } = await supabase.from('week_targets').upsert(capRows, { onConflict: 'employee_id,year' })
+    const { error } = await supabase.from('week_targets').upsert(capRows, { onConflict: 'employee_id,year,period_id' })
     setSyncingCap(false)
     if (error) { alert('Erreur lors de la synchronisation : ' + error.message); return }
     setNeedsCapSync(false)
@@ -265,29 +270,33 @@ export default function ReplacementPage() {
     // derriere la confirmation "Envoyer vers Semaine Type", qui concerne
     // uniquement les cibles horaires - le cap conges doit etre a jour des
     // le calcul, meme si l'admin n'envoie pas encore vers Semaine Type).
+    if (!periodId) return
     const year = new Date().getFullYear()
     const capRows = res.map(r => ({
       company_id: companyId,
       employee_id: r.id,
       year,
+      period_id: periodId,
       sixth_week_cap_min: r.normalWeeks > 0 ? r.sixthWkMin / r.normalWeeks : 0,
     }))
-    const { error: capErr } = await supabase.from('week_targets').upsert(capRows, { onConflict: 'employee_id,year' })
+    const { error: capErr } = await supabase.from('week_targets').upsert(capRows, { onConflict: 'employee_id,year,period_id' })
     if (capErr) alert('Le lissage est calculé, mais le taux de cotisation 6e semaine n\'a pas pu être enregistré en base (il reste disponible sur cet appareil) :\n' + capErr.message)
   }
 
   async function sendToSemaineType() {
+    if (!periodId) return
     setSending(true)
     const year = new Date().getFullYear()
     const rows = results.map(r => ({
       company_id: companyId,
       employee_id: r.id,
       year,
+      period_id: periodId,
       sem_a_minutes: r.semA,
       sem_b_minutes: r.semB,
       updated_at: new Date().toISOString(),
     }))
-    const { error: errA } = await supabase.from('week_targets').upsert(rows, { onConflict: 'employee_id,year' })
+    const { error: errA } = await supabase.from('week_targets').upsert(rows, { onConflict: 'employee_id,year,period_id' })
     if (errA) {
       setSending(false)
       alert('Erreur lors de l\'envoi des cibles vers Semaine Type :\n' + errA.message)
@@ -299,10 +308,11 @@ export default function ReplacementPage() {
       company_id: companyId,
       employee_id: r.id,
       year,
+      period_id: periodId,
       sem_a_no_sixth_minutes: r.semA_noSixth,
       sem_b_no_sixth_minutes: r.semB_noSixth,
     }))
-    const { error: errB } = await supabase.from('week_targets').upsert(rowsB, { onConflict: 'employee_id,year' })
+    const { error: errB } = await supabase.from('week_targets').upsert(rowsB, { onConflict: 'employee_id,year,period_id' })
     setSending(false)
     if (errB) {
       alert('Cibles principales enregistrées, mais erreur sur les cibles "sans 6e semaine" :\n' + errB.message)
