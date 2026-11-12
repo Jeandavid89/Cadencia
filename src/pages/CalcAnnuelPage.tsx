@@ -508,9 +508,9 @@ export default function CalcAnnuelPage() {
                         )
                       })}
                       <Td className="text-right text-indigo-700 font-semibold">{totalRepl > 0 ? fmtMinutes(totalRepl) : '—'}</Td>
-                      <Td className="text-right font-bold text-emerald-700">{fmtMinutes(theoryNormal + totalRepl)}</Td>
+                      <Td className="text-right font-bold text-emerald-700">{fmtMinutes(r.simulatedMin)}</Td>
                       <Td className="text-right text-slate-600">{fmtMinutes(r.cible)}</Td>
-                      {(() => { const s = theoryNormal + totalRepl - r.cible; const cls = s > 0 ? 'text-amber-600 font-bold' : s < 0 ? 'text-blue-600 font-bold' : 'text-emerald-600 font-bold'; return <Td className={`text-right ${cls}`}>{s >= 0 ? '+' : '−'}{fmtMinutes(Math.abs(s))}</Td> })()}
+                      {(() => { const s = r.solde; const cls = s > 0 ? 'text-amber-600 font-bold' : s < 0 ? 'text-blue-600 font-bold' : 'text-emerald-600 font-bold'; return <Td className={`text-right ${cls}`}>{s >= 0 ? '+' : '−'}{fmtMinutes(Math.abs(s))}</Td> })()}
                       {r.soldeLive !== null
                         ? (() => { const s = r.soldeLive!; const cls = s > 0 ? 'text-amber-600 font-bold' : s < 0 ? 'text-blue-600 font-bold' : 'text-emerald-600 font-bold'; return (
                             <Td className={`text-right ${cls} bg-amber-100/60`}>
