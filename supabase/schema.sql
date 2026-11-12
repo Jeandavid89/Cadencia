@@ -18,6 +18,9 @@
 
 -- Extension UUID
 create extension if not exists "uuid-ossp";
+-- Nécessaire pour la contrainte d'exclusion anti-chevauchement de
+-- planning_periods (Prompt 7+8, migration 005).
+create extension if not exists "btree_gist";
 
 -- ============================================================
 -- COMPANIES
@@ -52,11 +55,15 @@ create table employees (
   leave_minutes_per_year    integer not null default 0,  -- calculé dynamiquement, conservé pour référence
   leave_weeks_per_year      integer not null default 5,
   entry_date                date not null default (date_trunc('year', now())::date),
+  exit_date                 date,  -- null = toujours en poste (Prompt 12, migration 007)
   active                    boolean not null default true,
   sort_order                integer not null default 0,
   color_index               integer,  -- index de couleur d'affichage (AdminPage, ExportPanel)
-  created_at                timestamptz not null default now()
+  created_at                timestamptz not null default now(),
+  constraint employees_exit_after_entry check (exit_date is null or exit_date >= entry_date)
 );
+
+create index employees_entry_exit_idx on employees(company_id, entry_date, exit_date);
 
 alter table employees enable row level security;
 
@@ -64,6 +71,74 @@ create policy "company members only"
   on employees for all
   using (company_id in (select id from companies where auth.uid() = companies.id))
   with check (company_id in (select id from companies where auth.uid() = companies.id));
+
+-- ============================================================
+-- PLANNING PERIODS (Prompt 7+8, migration 005)
+-- Le planning de base (perpétuel) est une ligne réelle (is_base=true) par
+-- cabinet plutôt qu'une absence de ligne, pour que la contrainte
+-- d'exclusion anti-chevauchement protège aussi contre les doublons.
+-- ============================================================
+create table planning_periods (
+  id          uuid primary key default uuid_generate_v4(),
+  company_id  uuid not null references companies(id) on delete cascade,
+  label       text not null,
+  is_base     boolean not null default false,
+  start_date  date,
+  end_date    date,
+  created_at  timestamptz not null default now(),
+  constraint planning_periods_base_dates_null
+    check (is_base = (start_date is null and end_date is null)),
+  constraint planning_periods_dates_order
+    check (start_date is null or end_date is null or start_date <= end_date),
+  constraint planning_periods_single_year
+    check (start_date is null or extract(year from start_date) = extract(year from end_date))
+);
+
+create unique index planning_periods_one_base_idx
+  on planning_periods(company_id) where is_base;
+
+-- Chevauchement interdit entre périodes datées (bornes incluses des deux
+-- côtés) ; la période de base (dates NULL) est hors contrainte via le WHERE.
+alter table planning_periods
+  add constraint planning_periods_no_overlap
+  exclude using gist (company_id with =, daterange(start_date, end_date, '[]') with &&)
+  where (not is_base);
+
+alter table planning_periods enable row level security;
+
+create policy "company members only"
+  on planning_periods for all
+  using (company_id in (select id from companies where auth.uid() = companies.id))
+  with check (company_id in (select id from companies where auth.uid() = companies.id));
+
+-- Garde-fou "année déjà clôturée" (filet de sécurité, en plus du contrôle UI).
+create or replace function planning_periods_guard_closed_year() returns trigger as $$
+begin
+  if new.start_date is not null and exists (
+    select 1 from annual_carryover
+    where company_id = new.company_id and year = extract(year from new.start_date)::int
+  ) then
+    raise exception 'planning_period_year_closed';
+  end if;
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger planning_periods_guard_closed_year_trg
+  before insert or update on planning_periods
+  for each row execute function planning_periods_guard_closed_year();
+
+-- Auto-création de la période de base pour tout nouveau cabinet.
+create or replace function create_base_planning_period() returns trigger as $$
+begin
+  insert into planning_periods (company_id, label, is_base) values (new.id, 'Planning de base', true);
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger companies_create_base_period_trg
+  after insert on companies
+  for each row execute function create_base_planning_period();
 
 -- ============================================================
 -- PUBLIC HOLIDAYS
@@ -97,9 +172,12 @@ create table week_targets (
   sem_a_no_sixth_minutes  integer,  -- cible sans la 6e semaine (ReplacementPage)
   sem_b_no_sixth_minutes  integer,
   sixth_week_cap_min      numeric,  -- taux hebdo cotisation 6e semaine (Prompt 3, migration 003)
+  period_id               uuid not null references planning_periods(id) on delete cascade,  -- Prompt 10, migration 006
   updated_at              timestamptz not null default now(),
-  unique(employee_id, year)
+  unique(employee_id, year, period_id)
 );
+
+create index week_targets_period_idx on week_targets(period_id);
 
 alter table week_targets enable row level security;
 
@@ -121,8 +199,11 @@ create table semaine_type_slots (
   end_minutes   integer not null,
   break_minutes integer not null default 0,
   is_formation  boolean not null default false,
+  period_id     uuid not null references planning_periods(id) on delete cascade,  -- Prompt 7+8, migration 005
   created_at    timestamptz not null default now()
 );
+
+create index semaine_type_slots_period_idx on semaine_type_slots(period_id);
 
 alter table semaine_type_slots enable row level security;
 
@@ -170,8 +251,11 @@ create table replacement_slots (
   end_minutes           integer not null,
   break_minutes         integer not null default 0,
   is_formation          boolean not null default false,
+  period_id             uuid not null references planning_periods(id) on delete cascade,  -- Prompt 7+8, migration 005
   created_at            timestamptz not null default now()
 );
+
+create index replacement_slots_period_idx on replacement_slots(period_id);
 
 alter table replacement_slots enable row level security;
 
