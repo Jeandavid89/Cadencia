@@ -360,6 +360,10 @@ export default function PlanningPage() {
     if (!dayRef) return null
     if (isOnLeaveThisWeek(empId)) return { onLeave: true }
     const absentDays = new Set(dayOverrides.filter(o => o.employee_id === empId).map(o => o.day))
+    // Règle RH "Remplacement simple" : dès qu'une collègue est absente cette
+    // semaine, la semaine type normale est ignorée - un jour sans créneau de
+    // remplacement explicite compte 0, pas le planning normal.
+    const weekHasColleagueAbsence = dayOverrides.some(o => o.employee_id !== empId && o.type === 'leave_week')
     let reference = 0
     for (let d = 1; d <= 5; d++) {
       if (absentDays.has(d)) continue
@@ -368,7 +372,8 @@ export default function PlanningPage() {
         .filter(rs => rs.present_employee_id === empId && rs.day_of_week === d)
         .filter(rs => dayOverrides.some(o => o.employee_id === rs.absent_employee_id && o.day === d && o.type === 'leave_week'))
         .reduce((a, rs) => a + Math.max(0, rs.end_minutes - rs.start_minutes - rs.break_minutes), 0)
-      reference += replHours > 0 ? replHours : (dayRef[d] ?? 0)
+      if (replHours > 0) reference += replHours
+      else if (!weekHasColleagueAbsence) reference += (dayRef[d] ?? 0)
     }
     const actual = plannerSlots.filter(s => s.employee_id === empId).reduce((a, s) => a + eff(s), 0)
     return { onLeave: false, value: actual - reference }

@@ -103,12 +103,11 @@ describe('computeSimplifiedBilan', () => {
     expect(result.e1.soldeConges).toBe(2100 * 5 - 2100)
   })
 
-  it('un remplacement partiel (un seul jour de la semaine) ne fait pas perdre le crédit normal des autres jours de cette même semaine (non-régression)', () => {
+  it('un remplacement partiel (un seul jour de la semaine) ne fait pas perdre le crédit normal des autres jours NON concernés par une absence (non-régression du bug weekIsRepl)', () => {
     // e2 absente la semaine du 5 janvier 2026 ; e1 la remplace le LUNDI
-    // seulement (mêmes horaires que son propre lundi habituel), et travaille
-    // normalement le reste de la semaine. Le total hebdomadaire doit rester
-    // identique à une semaine 100% normale (2100 min = 5 × 7h), qu'il soit
-    // comptabilisé via le remplacement ou via la semaine type.
+    // seulement. Mardi-vendredi, e1 n'a NI remplacement NI absence de
+    // collègue : elle travaille normalement. Seule la semaine de e2 doit
+    // être affectée par la règle "semaine type ignorée" (cf. test suivant).
     const weekMonday = getMondayOf(new Date(2026, 0, 5))
     const employee2 = { id: 'e2', contract_minutes_per_week: 2100, formation_minutes_per_week: 0, leave_weeks_per_year: 5 }
     const leaveSlots: LeaveSlot[] = [{ employee_id: 'e2', date: toDateStr(weekMonday), slot_type: 'leave_week' }]
@@ -127,10 +126,35 @@ describe('computeSimplifiedBilan', () => {
       capMap: {},
       carryMap: {},
     })
-    // Même résultat que la référence "aucun remplacement" (5 × 2100, cf. 1er test) :
-    // le remplacement du lundi substitue exactement les mêmes heures que le
-    // lundi normal d'e1, sans affecter mardi-vendredi.
-    expect(result.e1.soldeHeures).toBe(5 * 2100)
+    // 51 semaines normales (2100 min) + 1 semaine de e2 où seul le lundi
+    // compte (420 min de remplacement, mar-ven à 0 car "semaine type
+    // ignorée cette semaine-là" - règle RH "Remplacement simple") :
+    // cible = (52-5)*2100 = 94500 ; théorie = 51*2100 + 420 = 107520
+    expect(result.e1.soldeHeures).toBe(51 * 2100 + 420 - (52 - 5) * 2100)
+  })
+
+  it('règle RH "Remplacement simple" : un jour sans créneau de remplacement explicite compte 0, pas la semaine type (non-régression)', () => {
+    // e2 absente toute la semaine du 5 janvier 2026 ; e1 ne la remplace
+    // AUCUN jour (aucun replSlot). D'après la règle documentée ("la
+    // semaine type normale est ignorée cette semaine-là"), e1 doit avoir 0
+    // minute créditée cette semaine-là, pas sa semaine type habituelle.
+    const weekMonday = getMondayOf(new Date(2026, 0, 5))
+    const employee2 = { id: 'e2', contract_minutes_per_week: 2100, formation_minutes_per_week: 0, leave_weeks_per_year: 5 }
+    const leaveSlots: LeaveSlot[] = [{ employee_id: 'e2', date: toDateStr(weekMonday), slot_type: 'leave_week' }]
+
+    const result = computeSimplifiedBilan({
+      year: 2026,
+      refMonday: weekMonday,
+      employees: [employee, employee2],
+      periodSlots: onlyBase(fullWeekSlots('e1'), []), // aucun remplacement défini
+      leaveSlots,
+      holSet: new Set(),
+      hasSixthWeek: false,
+      capMap: {},
+      carryMap: {},
+    })
+    // 51 semaines normales (2100 min) + 0 pour la semaine de e2
+    expect(result.e1.soldeHeures).toBe(51 * 2100 - (52 - 5) * 2100)
   })
 
   it('applique le report N-1 (heures et congés)', () => {

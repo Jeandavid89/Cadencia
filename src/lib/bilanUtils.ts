@@ -58,14 +58,21 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
       for (const s of cwSlots.filter(s => s.employee_id === emp.id && (s.slot_type === 'leave_day' || s.slot_type === 'public_holiday')))
         absentDays.add(new Date(s.date + 'T12:00:00').getDay())
       const absentCols = new Set(([...cwAbsentEmps]).filter(id => id !== emp.id))
+      // Règle RH "Remplacement simple" : dès qu'un collègue est absent cette
+      // semaine, la semaine type normale est ignorée - un jour sans créneau
+      // de remplacement explicite compte 0, pas le planning normal.
+      const weekHasColleagueAbsence = absentCols.size > 0
       let reference = 0
       for (let d = 1; d <= 5; d++) {
         if (absentDays.has(d)) continue
         const dayDate = new Date(cwMon); dayDate.setDate(cwMon.getDate() + (d - 1))
         const { semSlots: daySemSlots, replSlots: dayReplSlots } = slotsForDate(planningData.periodSlots, dayDate)
-        const dayRef = daySemSlots.filter(s => s.employee_id === emp.id && s.week_type === cwWeekType && s.day_of_week === d && !s.is_formation).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
         const replForDay = dayReplSlots.filter(r => r.present_employee_id === emp.id && r.day_of_week === d && !r.is_formation && absentCols.has(r.absent_employee_id))
-        reference += replForDay.length > 0 ? replForDay.reduce((a, r) => a + eff(r.start_minutes, r.end_minutes, r.break_minutes), 0) : dayRef
+        if (replForDay.length > 0) {
+          reference += replForDay.reduce((a, r) => a + eff(r.start_minutes, r.end_minutes, r.break_minutes), 0)
+        } else if (!weekHasColleagueAbsence) {
+          reference += daySemSlots.filter(s => s.employee_id === emp.id && s.week_type === cwWeekType && s.day_of_week === d && !s.is_formation).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
+        }
       }
       const actual = cwSlots.filter(s => s.employee_id === emp.id && s.slot_type === 'work' && s.start_minutes != null).reduce((a, s) => a + eff(s.start_minutes!, s.end_minutes ?? s.start_minutes!, s.break_minutes ?? 0), 0)
       weekSolde = actual - reference

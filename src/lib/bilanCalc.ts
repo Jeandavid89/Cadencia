@@ -145,6 +145,12 @@ export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<stri
       }
 
       const absentColleagues = employees.filter(o => o.id !== emp.id && absentWeeksByEmp[o.id]?.has(monKey))
+      // Règle RH documentée ("Remplacement simple") : dès qu'un collègue est
+      // absent cette semaine, les présents suivent UNIQUEMENT leur planning
+      // de remplacement - la semaine type normale est ignorée cette
+      // semaine-là, y compris pour les jours sans créneau de remplacement
+      // explicite (ils comptent alors 0, pas le planning normal).
+      const weekHasColleagueAbsence = absentColleagues.length > 0
 
       // Résolution jour par jour (pas un drapeau binaire par semaine) : un
       // remplacement un jour donné ne doit pas faire perdre le crédit normal
@@ -161,11 +167,13 @@ export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<stri
           for (const r of dayRepl) {
             if (!r.is_formation) replByAbsent[r.absent_employee_id] = (replByAbsent[r.absent_employee_id] ?? 0) + eff(r.start_minutes, r.end_minutes, r.break_minutes)
           }
-        } else {
+        } else if (!weekHasColleagueAbsence) {
           theoryNormal += semSlots
             .filter(s => s.employee_id === emp.id && s.week_type === weekType && s.day_of_week === jsDay && !s.is_formation)
             .reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
         }
+        // sinon : semaine de remplacement mais pas de créneau pour ce jour
+        // précis -> 0h (semaine type ignorée cette semaine-là).
       }
     }
 

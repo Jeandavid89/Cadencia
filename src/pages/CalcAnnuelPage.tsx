@@ -273,8 +273,9 @@ export default function CalcAnnuelPage() {
                 }
               }
             }
-          } else {
-            // Semaine normale ou férié en semaine de congé : semaine type
+          } else if (isLeaveWeek || absentColleagues.length === 0) {
+            // Semaine normale (personne absent) ou férié crédité pendant mon
+            // propre congé : la semaine type s'applique.
             for (const s of daySemSlots.filter(ss => ss.employee_id === emp.id && ss.week_type === weekType && ss.day_of_week === jsDay)) {
               const mins = eff(s.start_minutes, s.end_minutes, s.break_minutes)
               if (s.is_formation) {
@@ -286,6 +287,9 @@ export default function CalcAnnuelPage() {
               }
             }
           }
+          // sinon (règle RH "Remplacement simple") : semaine où un collègue
+          // est absent, mais aucun créneau de remplacement explicite ce jour
+          // précis pour moi -> 0h, la semaine type normale est ignorée.
         }
 
         // Agréger par type de semaine (hors semaines de congé)
