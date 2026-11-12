@@ -80,6 +80,11 @@ export default function CalcAnnuelPage() {
   }, [companyId, year])
 
   async function closeYear() {
+    if (rows.length === 0) {
+      alert(`Aucun employé ou aucune donnée pour ${year} : rien à clôturer.`)
+      setCloseStep('idle')
+      return
+    }
     setClosing(true)
     // r.solde et r.soldeConge sont déjà cumulatifs (ils incluent le report
     // entrant de l'année précédente) : ce qu'on archive ici est le solde de
@@ -421,12 +426,12 @@ export default function CalcAnnuelPage() {
                 Annuler
               </button>
             </div>
-          ) : (
+          ) : rows.length > 0 ? (
             <button onClick={() => setCloseStep('confirm')}
               className="px-3 py-1.5 text-xs font-semibold border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors">
               Clôturer l'année {year}
             </button>
-          )}
+          ) : null}
           {hasCarryover && (
             <span className="flex items-center gap-1.5 text-xs font-medium text-indigo-500 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-full" title={`Report de ${year - 1} inclus dans les soldes ci-dessous`}>
               ↩ Report {year - 1} inclus
