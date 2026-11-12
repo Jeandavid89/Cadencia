@@ -91,6 +91,10 @@ export function isWeekInEmployment(weekMon: Date, entryDate?: string | null, exi
  * sont résolus jour par jour via slotsForDate, pas une seule fois pour toute
  * l'année - une période peut démarrer/finir n'importe quel jour de la
  * semaine, pas seulement un lundi.
+ *
+ * Remplacement/normal résolus jour par jour (pas un drapeau par semaine) :
+ * un remplacement un jour donné ne fait pas perdre le crédit normal des
+ * autres jours de la même semaine qui n'ont pas eux-mêmes de remplacement.
  */
 export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<string, SimplifiedBilanRow> {
   const { year, refMonday, employees, periodSlots, leaveSlots, holSet, hasSixthWeek, capMap, carryMap } = input
@@ -142,31 +146,22 @@ export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<stri
 
       const absentColleagues = employees.filter(o => o.id !== emp.id && absentWeeksByEmp[o.id]?.has(monKey))
 
-      // Passe 1 : cette semaine contient-elle un jour de remplacement ?
-      let weekIsRepl = false
+      // Résolution jour par jour (pas un drapeau binaire par semaine) : un
+      // remplacement un jour donné ne doit pas faire perdre le crédit normal
+      // des AUTRES jours de la même semaine civile qui n'ont pas eux-mêmes de
+      // remplacement - même logique que le modèle détaillé (CalcAnnuelPage).
       for (let offset = 0; offset <= 4; offset++) {
         const day = new Date(weekMon); day.setDate(weekMon.getDate() + offset)
         const ds = toDateStr(day); const jsDay = day.getDay()
         if (leaveDayDates.has(ds)) continue
-        const { replSlots } = slotsForDate(periodSlots, day)
+        const weekType = getWeekType(day, refMonday)
+        const { semSlots, replSlots } = slotsForDate(periodSlots, day)
         const dayRepl = replSlots.filter(r => r.present_employee_id === emp.id && r.day_of_week === jsDay && absentColleagues.some(a => a.id === r.absent_employee_id))
         if (dayRepl.length > 0) {
-          weekIsRepl = true
           for (const r of dayRepl) {
             if (!r.is_formation) replByAbsent[r.absent_employee_id] = (replByAbsent[r.absent_employee_id] ?? 0) + eff(r.start_minutes, r.end_minutes, r.break_minutes)
           }
-        }
-      }
-
-      // Passe 2 : si aucun remplacement cette semaine, créditer la semaine
-      // type jour par jour (résolue par période, potentiellement différente
-      // d'un jour à l'autre si la semaine est à cheval entre deux périodes).
-      if (!weekIsRepl) {
-        for (let offset = 0; offset <= 4; offset++) {
-          const day = new Date(weekMon); day.setDate(weekMon.getDate() + offset)
-          const jsDay = day.getDay()
-          const weekType = getWeekType(day, refMonday)
-          const { semSlots } = slotsForDate(periodSlots, day)
+        } else {
           theoryNormal += semSlots
             .filter(s => s.employee_id === emp.id && s.week_type === weekType && s.day_of_week === jsDay && !s.is_formation)
             .reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
