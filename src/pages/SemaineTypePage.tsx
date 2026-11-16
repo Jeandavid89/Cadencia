@@ -70,6 +70,9 @@ export default function SemaineTypePage() {
   const [baseSlotsA, setBaseSlotsA] = useState<PlannerSlot[]>([])
   const [baseSlotsB, setBaseSlotsB] = useState<PlannerSlot[]>([])
   const [copyingBase, setCopyingBase] = useState(false)
+  // Mode "1 semaine" (Prompt 13) : pas d'alternance A/B, B dupliqué sur A.
+  const currentPeriod = periods.find(p => p.id === periodId)
+  const isSingleCycle = currentPeriod?.cycleMode === 'single'
 
   const saveTimers = useRef<{ A: ReturnType<typeof setTimeout> | null; B: ReturnType<typeof setTimeout> | null }>({ A: null, B: null })
   const stateRef = useRef({ A: slotsA, B: slotsB, employees, holidays })
@@ -171,6 +174,14 @@ export default function SemaineTypePage() {
     if (wt === 'A') setSlotsA(slots)
     else setSlotsB(slots)
     scheduleSave(wt, slots)
+    // Mode "1 semaine" (Prompt 13) : B est dupliqué sur A à chaque
+    // sauvegarde, pour que les modèles de calcul (qui résolvent toujours
+    // A/B normalement) trouvent des valeurs identiques des deux côtés.
+    if (wt === 'A' && isSingleCycle) {
+      const cloneB = slots.map((s, i) => ({ ...s, id: `single_b_${i}_${Date.now()}` }))
+      setSlotsB(cloneB)
+      scheduleSave('B', cloneB)
+    }
     setProjDone(false)
   }
 
@@ -182,13 +193,31 @@ export default function SemaineTypePage() {
     // Nouveaux ids locaux : ce ne sont que des clés React, jamais envoyées en
     // base (scheduleSave reconstruit chaque ligne sans l'id côté insert).
     const cloneA = baseSlotsA.map((s, i) => ({ ...s, id: `copy_a_${i}_${Date.now()}` }))
-    const cloneB = baseSlotsB.map((s, i) => ({ ...s, id: `copy_b_${i}_${Date.now()}` }))
+    // Mode "1 semaine" : B reste calqué sur A même si le planning de base
+    // copié est lui en cycle A/B.
+    const cloneB = isSingleCycle
+      ? cloneA.map((s, i) => ({ ...s, id: `copy_b_${i}_${Date.now()}` }))
+      : baseSlotsB.map((s, i) => ({ ...s, id: `copy_b_${i}_${Date.now()}` }))
     setSlotsA(cloneA)
     setSlotsB(cloneB)
     scheduleSave('A', cloneA)
     scheduleSave('B', cloneB)
     setCopyingBase(false)
     setProjDone(false)
+  }
+
+  async function setCycleMode(mode: 'ab' | 'single') {
+    if (!periodId || !currentPeriod || currentPeriod.cycleMode === mode) return
+    const { error } = await supabase.from('planning_periods').update({ cycle_mode: mode }).eq('id', periodId)
+    if (error) { alert('Erreur : ' + error.message); return }
+    setPeriods(prev => prev.map(p => p.id === periodId ? { ...p, cycleMode: mode } : p))
+    if (mode === 'single') {
+      // Resynchronise B sur A immédiatement (cf. duplication faite à chaque
+      // sauvegarde dans handleChange une fois le mode actif).
+      const cloneB = slotsA.map((s, i) => ({ ...s, id: `single_b_${i}_${Date.now()}` }))
+      setSlotsB(cloneB)
+      scheduleSave('B', cloneB)
+    }
   }
 
   function resetToEmpty() {
@@ -388,21 +417,35 @@ export default function SemaineTypePage() {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-lg font-bold text-slate-800">Semaine Type</h1>
-            {(() => {
-              const current = periods.find(p => p.id === periodId)
-              if (!current) return null
-              return current.isBase ? (
+            {currentPeriod && (
+              currentPeriod.isBase ? (
                 <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
                   Planning de base
                 </span>
               ) : (
                 <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-full">
-                  Période : {current.label} ({current.startDate} → {current.endDate})
+                  Période : {currentPeriod.label} ({currentPeriod.startDate} → {currentPeriod.endDate})
                 </span>
               )
-            })()}
+            )}
+            {currentPeriod && (
+              <div className="flex items-center text-[11px] font-semibold border border-slate-200 rounded-lg overflow-hidden" title="Cycle A/B alterné ou une seule semaine type répétée chaque semaine">
+                <button onClick={() => setCycleMode('ab')}
+                  className={`px-2 py-1 transition-colors ${!isSingleCycle ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+                  A/B
+                </button>
+                <button onClick={() => setCycleMode('single')}
+                  className={`px-2 py-1 transition-colors ${isSingleCycle ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+                  1 semaine
+                </button>
+              </div>
+            )}
           </div>
-          <p className="text-xs text-slate-400">Définissez les horaires habituels — semaine A ({isoRuleLabel.A}) et B ({isoRuleLabel.B})</p>
+          <p className="text-xs text-slate-400">
+            {isSingleCycle
+              ? 'Définissez les horaires habituels — une seule semaine, répétée toutes les semaines'
+              : <>Définissez les horaires habituels — semaine A ({isoRuleLabel.A}) et B ({isoRuleLabel.B})</>}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           {periods.length > 1 && (
@@ -458,6 +501,7 @@ export default function SemaineTypePage() {
                       const aB = getActual(emp.id, 'B')
                       const fA = getActualForm(emp.id, 'A')
                       const fB = getActualForm(emp.id, 'B')
+                      if (isSingleCycle) return null // redondant avec la ligne "A" juste en dessous
                       const actual2w = aA + aB
                       const form2w = fA + fB
                       const target2w = tA + tB
@@ -474,7 +518,7 @@ export default function SemaineTypePage() {
                         </span>
                       )
                     })()}
-                    {(['A', 'B'] as const).map(wt => {
+                    {(isSingleCycle ? (['A'] as const) : (['A', 'B'] as const)).map(wt => {
                       const t = getTarget(emp.id, wt)
                       const a = getActual(emp.id, wt)
                       const f = getActualForm(emp.id, wt)
@@ -483,7 +527,7 @@ export default function SemaineTypePage() {
                       return (
                         <span key={wt} className="flex items-center gap-1">
                           <span className={`px-2 py-0.5 rounded-full text-xs ${ok ? 'bg-emerald-50' : 'bg-slate-100'}`}>
-                            <span className="text-slate-400">{wt} : </span>
+                            <span className="text-slate-400">{isSingleCycle ? 'Semaine' : wt} : </span>
                             <span className={ok ? 'font-bold text-emerald-700' : 'font-normal text-red-500'}>{fmtMinutes(a)}</span>
                             <span className="text-slate-400"> / </span>
                             <span className="font-bold text-slate-700">{fmtMinutes(t)}</span>
@@ -507,17 +551,19 @@ export default function SemaineTypePage() {
 
         {/* Planner */}
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-          <div className="flex border-b border-slate-100">
-            {(['A', 'B'] as const).map(t => (
-              <button key={t} onClick={() => setActiveTab(t)}
-                className={`flex-1 py-3 text-sm font-semibold transition-colors ${activeTab === t ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}>
-                Semaine {t} <span className="text-[11px] font-normal opacity-70">({isoRuleLabel[t]})</span>
-              </button>
-            ))}
-          </div>
+          {!isSingleCycle && (
+            <div className="flex border-b border-slate-100">
+              {(['A', 'B'] as const).map(t => (
+                <button key={t} onClick={() => setActiveTab(t)}
+                  className={`flex-1 py-3 text-sm font-semibold transition-colors ${activeTab === t ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}>
+                  Semaine {t} <span className="text-[11px] font-normal opacity-70">({isoRuleLabel[t]})</span>
+                </button>
+              ))}
+            </div>
+          )}
           {employees.length === 0
             ? <p className="p-8 text-sm text-slate-400 text-center">Aucun employé — configurez-les dans Administration.</p>
-            : <WeekPlanner employees={plannerEmps} slots={activeTab === 'A' ? slotsA : slotsB} onChange={s => handleChange(activeTab, s)} />}
+            : <WeekPlanner employees={plannerEmps} slots={isSingleCycle ? slotsA : (activeTab === 'A' ? slotsA : slotsB)} onChange={s => handleChange(isSingleCycle ? 'A' : activeTab, s)} />}
         </div>
 
         {/* Tableau récap */}
@@ -530,10 +576,10 @@ export default function SemaineTypePage() {
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/40">
                   <th className="px-5 py-3 text-left text-slate-400 font-semibold w-40">Employé</th>
-                  {(['A', 'B'] as const).map(wt =>
+                  {(isSingleCycle ? (['A'] as const) : (['A', 'B'] as const)).map(wt =>
                     [...DAY_NAMES, 'Total'].map((d, di) => (
                       <th key={`${wt}${di}`} className={`px-3 py-3 text-center font-semibold ${d === 'Total' ? 'text-indigo-500 border-r border-slate-200' : 'text-slate-400'}`}>
-                        {di === 0 ? <><span className="text-indigo-400 font-bold">Sem {wt} — </span>{d}</> : d}
+                        {di === 0 ? (isSingleCycle ? <><span className="text-indigo-400 font-bold">Semaine — </span>{d}</> : <><span className="text-indigo-400 font-bold">Sem {wt} — </span>{d}</>) : d}
                       </th>
                     ))
                   )}
@@ -550,7 +596,7 @@ export default function SemaineTypePage() {
                           <span className="font-medium text-slate-700">{fullName(emp)}</span>
                         </div>
                       </td>
-                      {(['A', 'B'] as const).map(wt => {
+                      {(isSingleCycle ? (['A'] as const) : (['A', 'B'] as const)).map(wt => {
                         const sl = (wt === 'A' ? slotsA : slotsB).filter(s => s.employee_id === emp.id)
                         const days = [1, 2, 3, 4, 5].map(d => sl.filter(s => s.day === d).reduce((a, s) => a + eff(s), 0))
                         const tot = days.reduce((a, x) => a + x, 0)
@@ -628,7 +674,7 @@ export default function SemaineTypePage() {
         {/* Projection */}
         <div className="bg-white rounded-2xl border border-slate-200 p-6">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Projeter sur le planning</p>
-          <p className="text-xs text-slate-400 mb-4">Génère le planning réel semaine par semaine (cycle A/B). Les jours fériés sont marqués automatiquement.</p>
+          <p className="text-xs text-slate-400 mb-4">Génère le planning réel semaine par semaine {isSingleCycle ? '(une seule semaine répétée)' : '(cycle A/B)'}. Les jours fériés sont marqués automatiquement.</p>
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs text-slate-500 font-medium">Début</label>

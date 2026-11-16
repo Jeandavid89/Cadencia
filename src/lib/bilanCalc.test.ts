@@ -15,7 +15,7 @@ function fullWeekSlots(employeeId: string): SemaineTypeSlot[] {
   return slots
 }
 
-const basePeriod: PlanningPeriod = { id: 'base', companyId: 'c1', label: 'Planning de base', isBase: true, startDate: null, endDate: null }
+const basePeriod: PlanningPeriod = { id: 'base', companyId: 'c1', label: 'Planning de base', isBase: true, startDate: null, endDate: null, cycleMode: 'ab' }
 function onlyBase(semSlots: SemaineTypeSlot[], replSlots: PeriodSlots['replSlots'] = []): PeriodSlots[] {
   return [{ period: basePeriod, semSlots, replSlots }]
 }
@@ -178,7 +178,7 @@ describe('computeSimplifiedBilan', () => {
       const ref = getMondayOf(new Date(2026, 0, 5))
       const monday = getMondayOf(new Date(2026, 2, 2)) // lundi 2 mars 2026
       const friday = new Date(monday); friday.setDate(friday.getDate() + 4)
-      const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Semaine spéciale', isBase: false, startDate: toDateStr(monday), endDate: toDateStr(friday) }
+      const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Semaine spéciale', isBase: false, startDate: toDateStr(monday), endDate: toDateStr(friday), cycleMode: 'ab' }
 
       // Pendant la période : seulement 3h/jour au lieu de 7h/jour
       const periodSemSlots: SemaineTypeSlot[] = ['A', 'B'].flatMap(week_type =>
@@ -208,7 +208,7 @@ describe('computeSimplifiedBilan', () => {
       const monday = getMondayOf(new Date(2026, 2, 2)) // lundi 2 mars 2026
       const wednesday = new Date(monday); wednesday.setDate(wednesday.getDate() + 2)
       const friday = new Date(monday); friday.setDate(friday.getDate() + 4)
-      const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Mi-semaine', isBase: false, startDate: toDateStr(wednesday), endDate: toDateStr(friday) }
+      const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Mi-semaine', isBase: false, startDate: toDateStr(wednesday), endDate: toDateStr(friday), cycleMode: 'ab' }
 
       // Pendant la période : 0h/jour (rien du tout) pour isoler son effet
       const periodSemSlots: SemaineTypeSlot[] = []
@@ -281,7 +281,7 @@ describe('computeSimplifiedBilan', () => {
       const ref = getMondayOf(new Date(2026, 0, 5))
       const periodStart = getMondayOf(new Date(2026, 2, 2)) // lundi 2 mars 2026
       const periodEnd = new Date(periodStart); periodEnd.setDate(periodEnd.getDate() + 4)
-      const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Période test', isBase: false, startDate: toDateStr(periodStart), endDate: toDateStr(periodEnd) }
+      const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Période test', isBase: false, startDate: toDateStr(periodStart), endDate: toDateStr(periodEnd), cycleMode: 'ab' }
       // Entré le mercredi de cette même semaine de période
       const entryDate = toDateStr(new Date(periodStart.getTime() + 2 * 86400000))
       const empJoinsMidPeriod = { ...employee, entry_date: entryDate, exit_date: null }

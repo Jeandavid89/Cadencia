@@ -7,6 +7,13 @@ export interface PlanningPeriod {
   isBase: boolean
   startDate: string | null  // 'YYYY-MM-DD', null seulement si isBase
   endDate: string | null
+  // 'ab' (défaut) : semaine type A/B alternée. 'single' : une seule semaine
+  // type, saisie sous "A" et dupliquée telle quelle vers "B" à la sauvegarde
+  // (SemaineTypePage) - aucun changement nécessaire dans les modèles de
+  // calcul (bilanCalc.ts, CalcAnnuelPage.tsx, etc.), qui continuent de
+  // résoudre A/B normalement et trouvent des valeurs identiques des deux
+  // côtés (Prompt 13).
+  cycleMode: 'ab' | 'single'
 }
 
 /**

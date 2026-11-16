@@ -28,13 +28,13 @@ export interface PlanningData {
  */
 export async function loadPlanningData(companyId: string): Promise<PlanningData> {
   const [{ data: periodsRaw }, { data: semRaw }, { data: replRaw }] = await Promise.all([
-    supabase.from('planning_periods').select('id,company_id,label,is_base,start_date,end_date').eq('company_id', companyId),
+    supabase.from('planning_periods').select('id,company_id,label,is_base,start_date,end_date,cycle_mode').eq('company_id', companyId),
     supabase.from('semaine_type_slots').select('id,employee_id,week_type,day_of_week,start_minutes,end_minutes,break_minutes,is_formation,period_id').eq('company_id', companyId),
     supabase.from('replacement_slots').select('id,absent_employee_id,present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation,period_id').eq('company_id', companyId),
   ])
 
-  const periods: PlanningPeriod[] = ((periodsRaw ?? []) as { id: string; company_id: string; label: string; is_base: boolean; start_date: string | null; end_date: string | null }[])
-    .map(p => ({ id: p.id, companyId: p.company_id, label: p.label, isBase: p.is_base, startDate: p.start_date, endDate: p.end_date }))
+  const periods: PlanningPeriod[] = ((periodsRaw ?? []) as { id: string; company_id: string; label: string; is_base: boolean; start_date: string | null; end_date: string | null; cycle_mode: 'ab' | 'single' }[])
+    .map(p => ({ id: p.id, companyId: p.company_id, label: p.label, isBase: p.is_base, startDate: p.start_date, endDate: p.end_date, cycleMode: p.cycle_mode }))
 
   const base = periods.find(p => p.isBase)
   if (!base) throw new Error(`loadPlanningData: aucune période de base trouvée pour company_id=${companyId}`)

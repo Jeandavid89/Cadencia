@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { resolveActivePeriod, findOverlappingPeriod, countPeriodWeeks, type PlanningPeriod } from './periods'
 import { getYearWeekMondays, defaultRefMonday, countYearWeeks } from './weekUtils'
 
-const base: PlanningPeriod = { id: 'base', companyId: 'c1', label: 'Planning de base', isBase: true, startDate: null, endDate: null }
-const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Été 2026', isBase: false, startDate: '2026-06-12', endDate: '2026-09-13' }
-const noel: PlanningPeriod = { id: 'noel', companyId: 'c1', label: 'Vacances Noël', isBase: false, startDate: '2026-12-01', endDate: '2026-12-20' }
+const base: PlanningPeriod = { id: 'base', companyId: 'c1', label: 'Planning de base', isBase: true, startDate: null, endDate: null, cycleMode: 'ab' }
+const ete: PlanningPeriod = { id: 'ete', companyId: 'c1', label: 'Été 2026', isBase: false, startDate: '2026-06-12', endDate: '2026-09-13', cycleMode: 'ab' }
+const noel: PlanningPeriod = { id: 'noel', companyId: 'c1', label: 'Vacances Noël', isBase: false, startDate: '2026-12-01', endDate: '2026-12-20', cycleMode: 'ab' }
 
 describe('resolveActivePeriod', () => {
   it('retourne la base si aucune période datée ne couvre la date', () => {

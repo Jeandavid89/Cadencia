@@ -19,6 +19,21 @@ function dayOfYear(iso: string): number {
   return Math.round((cur - start) / 86400000) + 1
 }
 
+function CycleModeToggle({ period, onChange }: { period: PlanningPeriod; onChange: (mode: 'ab' | 'single') => void }) {
+  return (
+    <div className="flex items-center text-[11px] font-semibold border border-slate-200 rounded-lg overflow-hidden" title="Cycle A/B alterné ou une seule semaine type répétée chaque semaine">
+      <button onClick={() => onChange('ab')}
+        className={`px-2 py-1.5 transition-colors ${period.cycleMode === 'ab' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+        A/B
+      </button>
+      <button onClick={() => onChange('single')}
+        className={`px-2 py-1.5 transition-colors ${period.cycleMode === 'single' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+        1 semaine
+      </button>
+    </div>
+  )
+}
+
 export default function PeriodesPage() {
   const { user } = useAuthStore()
   const companyId = user?.id ?? ''
@@ -39,11 +54,11 @@ export default function PeriodesPage() {
   const load = useCallback(async () => {
     setLoaded(false)
     const [{ data: periodsRaw }, { data: closure }] = await Promise.all([
-      supabase.from('planning_periods').select('id,company_id,label,is_base,start_date,end_date').eq('company_id', companyId),
+      supabase.from('planning_periods').select('id,company_id,label,is_base,start_date,end_date,cycle_mode').eq('company_id', companyId),
       supabase.from('annual_carryover').select('employee_id').eq('company_id', companyId).eq('year', year).limit(1),
     ])
-    const all: PlanningPeriod[] = ((periodsRaw ?? []) as { id: string; company_id: string; label: string; is_base: boolean; start_date: string | null; end_date: string | null }[])
-      .map(p => ({ id: p.id, companyId: p.company_id, label: p.label, isBase: p.is_base, startDate: p.start_date, endDate: p.end_date }))
+    const all: PlanningPeriod[] = ((periodsRaw ?? []) as { id: string; company_id: string; label: string; is_base: boolean; start_date: string | null; end_date: string | null; cycle_mode: 'ab' | 'single' }[])
+      .map(p => ({ id: p.id, companyId: p.company_id, label: p.label, isBase: p.is_base, startDate: p.start_date, endDate: p.end_date, cycleMode: p.cycle_mode }))
     setPeriods(all)
     setYearClosed((closure ?? []).length > 0)
     setLoaded(true)
@@ -84,6 +99,27 @@ export default function PeriodesPage() {
       return
     }
     resetForm()
+    load()
+  }
+
+  async function setCycleMode(period: PlanningPeriod, mode: 'ab' | 'single') {
+    if (period.cycleMode === mode) return
+    const { error } = await supabase.from('planning_periods').update({ cycle_mode: mode }).eq('id', period.id)
+    if (error) { alert('Erreur : ' + error.message); return }
+    if (mode === 'single') {
+      // Resynchronise B sur A immédiatement, sans attendre une prochaine
+      // sauvegarde dans Semaine Type - la semaine unique doit être
+      // effective dès le changement de mode.
+      const { data: aSlots } = await supabase.from('semaine_type_slots')
+        .select('employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation')
+        .eq('company_id', companyId).eq('period_id', period.id).eq('week_type', 'A')
+      await supabase.from('semaine_type_slots').delete().eq('company_id', companyId).eq('period_id', period.id).eq('week_type', 'B')
+      if (aSlots && aSlots.length > 0) {
+        await supabase.from('semaine_type_slots').insert(
+          aSlots.map(s => ({ ...s, week_type: 'B', company_id: companyId, period_id: period.id }))
+        )
+      }
+    }
     load()
   }
 
@@ -189,6 +225,7 @@ export default function PeriodesPage() {
                 <p className="text-xs text-slate-400">Toute l'année, en dehors de toute période ci-dessous</p>
               </div>
               <div className="flex items-center gap-2">
+                {basePeriod && <CycleModeToggle period={basePeriod} onChange={m => setCycleMode(basePeriod, m)} />}
                 <button onClick={() => navigate(`/semaine-type${basePeriod ? `?period=${basePeriod.id}` : ''}`)}
                   className="px-3 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors">
                   Semaine type →
@@ -214,6 +251,7 @@ export default function PeriodesPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <CycleModeToggle period={p} onChange={m => setCycleMode(p, m)} />
                   <button onClick={() => navigate(`/semaine-type?period=${p.id}`)}
                     className="px-3 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors">
                     Semaine type →
