@@ -8,6 +8,7 @@ import ExportPanel from '../components/ExportPanel'
 import { getWeekType, defaultRefMonday, toDateStr } from '../lib/weekUtils'
 import { computeSimplifiedBilan } from '../lib/bilanCalc'
 import { loadPlanningData } from '../lib/planningData'
+import { regenerateNormalSchedule } from '../lib/scheduleGen'
 
 // ─── helpers ISO week ───
 function getISOWeek(date: Date): number {
@@ -310,6 +311,9 @@ export default function PlanningPage() {
   async function removeOverride(empId: string, day: number) {
     const ds = toDateStr(addDays(weekStart, day - 1))
     await supabase.from('planning_slots').delete().eq('company_id', companyId).eq('employee_id', empId).eq('date', ds).in('slot_type', ['leave_day', 'leave_week', 'public_holiday'])
+    // Régénère le planning normal (bug QA : retirer un congé/férié laissait
+    // la journée vide au lieu de remettre l'horaire habituel) - scheduleGen.ts
+    await regenerateNormalSchedule(companyId, [{ employeeId: empId, date: ds }])
     setContextMenu(null)
     loadWeek()
   }

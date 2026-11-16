@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import { getWeekType, defaultRefMonday } from '../lib/weekUtils'
 import { loadPlanningData } from '../lib/planningData'
+import { regenerateNormalSchedule } from '../lib/scheduleGen'
 
 interface Employee {
   id: string; first_name: string; last_name: string
@@ -265,6 +266,7 @@ export default function CongesPage() {
     if (entry.type === 'week') {
       const mon = getMondayOf(new Date(entry.dates[0] + 'T12:00:00'))
       const fri = new Date(mon); fri.setDate(mon.getDate() + 4)
+      const weekDates = [0, 1, 2, 3, 4].map(o => { const d = new Date(mon); d.setDate(mon.getDate() + o); return toStr(d) })
 
       // Supprimer les congés de l'absente
       await supabase.from('planning_slots').delete()
@@ -277,6 +279,10 @@ export default function CongesPage() {
         .select('present_employee_id,day_of_week')
         .eq('company_id', companyId)
         .eq('absent_employee_id', emp.id)
+
+      // Régénère le planning normal (bug QA : la suppression laissait ces
+      // jours vides, pour l'absente ET ses remplaçantes) - cf. scheduleGen.ts
+      const toRegenerate: { employeeId: string; date: string }[] = weekDates.map(date => ({ employeeId: emp.id, date }))
 
       if (replSlots && replSlots.length > 0) {
         const byPresent = new Map<string, string[]>()
@@ -291,8 +297,10 @@ export default function CongesPage() {
           await supabase.from('planning_slots').delete()
             .eq('company_id', companyId).eq('employee_id', presentEmpId)
             .in('date', dates).in('slot_type', ['work', 'formation'])
+          for (const date of dates) toRegenerate.push({ employeeId: presentEmpId, date })
         }
       }
+      await regenerateNormalSchedule(companyId, toRegenerate)
     } else if (entry.type === 'partial' && entry.slotId) {
       await supabase.from('planning_slots').delete()
         .eq('company_id', companyId).eq('id', entry.slotId)
@@ -301,6 +309,7 @@ export default function CongesPage() {
       await supabase.from('planning_slots').delete()
         .eq('company_id', companyId).eq('employee_id', emp.id)
         .in('date', entry.dates)
+      await regenerateNormalSchedule(companyId, entry.dates.map(date => ({ employeeId: emp.id, date })))
     }
     setDeleting(null)
     load()
