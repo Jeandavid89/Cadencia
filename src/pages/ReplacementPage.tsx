@@ -340,25 +340,36 @@ export default function ReplacementPage() {
     <div className="p-8 text-sm text-slate-400">Aucun employé configuré — commencez par l'Administration.</div>
   )
 
+  const currentPeriod = periods.find(p => p.id === periodId)
+  // Mathématiquement, le calcul produit déjà semA≈semB en mode "semaine
+  // unique" (le split ceil/floor d'une valeur doublée retombe sur la cible
+  // hebdo) - ici on adapte seulement l'affichage pour ne pas montrer deux
+  // cibles redondantes qui donnent l'impression (à tort) que A et B sont
+  // réellement distincts (audit du 2026-11-16).
+  const isSingleCycle = currentPeriod?.cycleMode === 'single'
+
   return (
     <div className="min-h-full bg-slate-50">
       <div className="bg-white border-b border-slate-200 px-8 py-4 sticky top-0 z-30">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-bold text-slate-800">Remplacement & Lissage</h1>
-            {(() => {
-              const current = periods.find(p => p.id === periodId)
-              if (!current) return null
-              return current.isBase ? (
+            {currentPeriod && (
+              currentPeriod.isBase ? (
                 <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-full">
                   Planning de base
                 </span>
               ) : (
                 <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-full">
-                  Période : {current.label} ({current.startDate} → {current.endDate})
+                  Période : {currentPeriod.label} ({currentPeriod.startDate} → {currentPeriod.endDate})
                 </span>
               )
-            })()}
+            )}
+            {currentPeriod && (
+              <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${isSingleCycle ? 'text-violet-600 bg-violet-50 border-violet-200' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
+                {isSingleCycle ? '1 semaine' : 'Cycle A/B'}
+              </span>
+            )}
             {periods.length > 1 && (
               <select
                 value={periodId ?? ''}
@@ -556,8 +567,8 @@ export default function ReplacementPage() {
                     <thead>
                       <tr className="text-amber-600 border-b border-amber-100">
                         <th className="text-left px-3 py-1.5 font-semibold">Employé</th>
-                        <th className="text-right px-3 py-1.5 font-semibold">Sem. A</th>
-                        <th className="text-right px-3 py-1.5 font-semibold">Sem. B</th>
+                        <th className="text-right px-3 py-1.5 font-semibold">{isSingleCycle ? 'Semaine' : 'Sem. A'}</th>
+                        {!isSingleCycle && <th className="text-right px-3 py-1.5 font-semibold">Sem. B</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -565,7 +576,7 @@ export default function ReplacementPage() {
                         <tr key={r.id} className="border-b border-amber-50 last:border-0">
                           <td className="px-3 py-1.5 text-slate-700">{r.name}</td>
                           <td className="px-3 py-1.5 text-right text-slate-700">{fmtMinutes(r.semA)}</td>
-                          <td className="px-3 py-1.5 text-right text-slate-700">{fmtMinutes(r.semB)}</td>
+                          {!isSingleCycle && <td className="px-3 py-1.5 text-right text-slate-700">{fmtMinutes(r.semB)}</td>}
                         </tr>
                       ))}
                     </tbody>
@@ -635,15 +646,15 @@ export default function ReplacementPage() {
                   <div className="flex gap-3">
                     <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-[10px] font-black flex items-center justify-center shrink-0 mt-0.5">5</span>
                     <div>
-                      <p className="font-semibold text-slate-700">Cible 2 sem. / Sem. A / Sem. B</p>
-                      <p className="text-slate-400 mt-0.5">Cycle normal + ajustement = objectif pour les semaines normales. Pendant les semaines de remplacement, l'employée travaille naturellement plus — c'est ce qui équilibre l'année. Divisé en sem. A et B.</p>
+                      <p className="font-semibold text-slate-700">Cible 2 sem. / {isSingleCycle ? 'Semaine' : 'Sem. A / Sem. B'}</p>
+                      <p className="text-slate-400 mt-0.5">Cycle normal + ajustement = objectif pour les semaines normales. Pendant les semaines de remplacement, l'employée travaille naturellement plus — c'est ce qui équilibre l'année. {isSingleCycle ? 'Cette période est en mode "semaine unique" : une seule cible hebdomadaire s\'applique.' : 'Divisé en sem. A et B.'}</p>
                     </div>
                   </div>
                   {sixthWeek && (
                     <div className="flex gap-3">
                       <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-600 text-[10px] font-black flex items-center justify-center shrink-0 mt-0.5">6</span>
                       <div>
-                        <p className="font-semibold text-amber-700">Réf. Congés A / B</p>
+                        <p className="font-semibold text-amber-700">Réf. Congés{isSingleCycle ? '' : ' A / B'}</p>
                         <p className="text-slate-400 mt-0.5">Cible par semaine <strong>sans</strong> la cotisation 6ème semaine — uniquement l'ajustement remplacement.</p>
                         <p className="text-slate-400 mt-1">C'est cette valeur qui est décomptée du solde de congés lors d'une semaine de congé. Les heures capitalisées pour la 6ème semaine ne sont <em>pas</em> consommées par les congés normaux — elles lui sont réservées.</p>
                         <p className="text-amber-600 mt-1">Exemple Sarah : elle travaille 34h53/sem (avec cotisation ~1h). Quand elle pose une semaine de congé, seules 33h54 sont décomptées.</p>
@@ -670,10 +681,10 @@ export default function ReplacementPage() {
                     <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-left text-slate-400">Sem. norm.</th>
                     <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-left text-slate-400">Ajust./cycle</th>
                     <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-center text-indigo-500">Cible 2 sem.</th>
-                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-center text-indigo-500">Col. A sem. A</th>
-                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-center text-indigo-500">Col. A sem. B</th>
-                    {sixthWeek && <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-center text-amber-500">Réf. congés A</th>}
-                    {sixthWeek && <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-center text-amber-500">Réf. congés B</th>}
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-center text-indigo-500">{isSingleCycle ? 'Cible semaine' : 'Col. A sem. A'}</th>
+                    {!isSingleCycle && <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-center text-indigo-500">Col. A sem. B</th>}
+                    {sixthWeek && <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-center text-amber-500">{isSingleCycle ? 'Réf. congés' : 'Réf. congés A'}</th>}
+                    {sixthWeek && !isSingleCycle && <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-center text-amber-500">Réf. congés B</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -686,9 +697,9 @@ export default function ReplacementPage() {
                       <td className="px-5 py-4">{fmtAdj(r.adjustPerCycle)}</td>
                       <td className="px-5 py-4 text-center"><span className="bg-slate-100 text-slate-700 font-bold px-3 py-1 rounded-lg">{fmtMinutes(r.semA + r.semB)}</span></td>
                       <td className="px-5 py-4 text-center"><span className="bg-indigo-50 text-indigo-700 font-bold px-3 py-1 rounded-lg">{fmtMinutes(r.semA)}</span></td>
-                      <td className="px-5 py-4 text-center"><span className="bg-indigo-50 text-indigo-700 font-bold px-3 py-1 rounded-lg">{fmtMinutes(r.semB)}</span></td>
+                      {!isSingleCycle && <td className="px-5 py-4 text-center"><span className="bg-indigo-50 text-indigo-700 font-bold px-3 py-1 rounded-lg">{fmtMinutes(r.semB)}</span></td>}
                       {sixthWeek && <td className="px-5 py-4 text-center"><span className="bg-amber-50 text-amber-700 font-bold px-3 py-1 rounded-lg">{fmtMinutes(r.semA_noSixth ?? 0)}</span></td>}
-                      {sixthWeek && <td className="px-5 py-4 text-center"><span className="bg-amber-50 text-amber-700 font-bold px-3 py-1 rounded-lg">{fmtMinutes(r.semB_noSixth ?? 0)}</span></td>}
+                      {sixthWeek && !isSingleCycle && <td className="px-5 py-4 text-center"><span className="bg-amber-50 text-amber-700 font-bold px-3 py-1 rounded-lg">{fmtMinutes(r.semB_noSixth ?? 0)}</span></td>}
                     </tr>
                   ))}
                 </tbody>

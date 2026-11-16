@@ -6,7 +6,8 @@ import { fmtMinutes } from '../types'
 import WeekPlanner, { EMP_COLORS, eff, type PlannerSlot, type PlannerEmployee, type DayOverlay, type LeavePartialSlot } from '../components/WeekPlanner'
 import ExportPanel from '../components/ExportPanel'
 import { getWeekType, defaultRefMonday, toDateStr } from '../lib/weekUtils'
-import { computeSimplifiedBilan } from '../lib/bilanCalc'
+import { computeSimplifiedBilan, slotsForDate, type PeriodSlots } from '../lib/bilanCalc'
+import { effectiveWeekType } from '../lib/periods'
 import { loadPlanningData } from '../lib/planningData'
 import { regenerateNormalSchedule } from '../lib/scheduleGen'
 
@@ -63,13 +64,11 @@ export default function PlanningPage() {
   const [weekStart, setWeekStart] = useState<Date>(() => getMondayOf(new Date()))
   const [employees, setEmployees] = useState<Employee[]>([])
   const [targets, setTargets] = useState<WeekTarget[]>([])
-  // Référence semaine type par jour : { [empId]: { A: { 1: min, …, 5: min }, B: { … } } }
-  const [stRef, setStRef] = useState<Record<string, Record<'A' | 'B', Record<number, number>>>>({})
+  const [periodSlots, setPeriodSlots] = useState<PeriodSlots[]>([])
   const [dbSlots, setDbSlots] = useState<DBPlanningSlot[]>([])
   const [holidays, setHolidays] = useState<{ date: string; name: string }[]>([])
   const [loaded, setLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [replConfig, setReplConfig] = useState<{ absent_employee_id: string; present_employee_id: string; day_of_week: number; start_minutes: number; end_minutes: number; break_minutes: number }[]>([])
   const [refMonday, setRefMonday] = useState<Date>(() => defaultRefMonday(new Date().getFullYear()))
   const [calOpen, setCalOpen] = useState(false)
   const [calMonth, setCalMonth] = useState<Date>(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
@@ -98,24 +97,25 @@ export default function PlanningPage() {
       setRefMonday(refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year))
       if (tgts) setTargets(tgts)
       if (hols) setHolidays(hols)
-      setReplConfig(planningData.replSlots)
-      if (emps) {
-        setEmployees(emps)
-        // Initialiser stRef : heures par jour pour chaque employé/semaine type
-        // TODO (Prompt 9) : résoudre par période/date au lieu de la vue à plat.
-        const emptyDays = () => ({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 })
-        const ref: Record<string, Record<'A' | 'B', Record<number, number>>> = {}
-        emps.forEach(e => { ref[e.id] = { A: emptyDays(), B: emptyDays() } })
-        for (const s of planningData.semSlots) {
-          if (ref[s.employee_id]) {
-            ref[s.employee_id][s.week_type][s.day_of_week] += Math.max(0, s.end_minutes - s.start_minutes - s.break_minutes)
-          }
-        }
-        setStRef(ref)
-      }
+      setPeriodSlots(planningData.periodSlots)
+      if (emps) setEmployees(emps)
     }
     init()
   }, [companyId])
+
+  // Heures théoriques (semaine type, formation exclue) d'un employé pour un
+  // jour de la semaine actuellement affichée, résolues par la période active
+  // à cette date et son mode de cycle A/B vs semaine unique (effectiveWeekType)
+  // - remplace l'ancienne vue à plat stRef, qui ignorait périodes et cycle_mode
+  // (audit du 2026-11-16).
+  function getDayRef(empId: string, day: number): number {
+    const date = addDays(weekStart, day - 1)
+    const { semSlots, period } = slotsForDate(periodSlots, date)
+    const wt = effectiveWeekType(period, date, refMonday)
+    return semSlots
+      .filter(s => s.employee_id === empId && s.week_type === wt && s.day_of_week === day && !s.is_formation)
+      .reduce((a, s) => a + Math.max(0, s.end_minutes - s.start_minutes - s.break_minutes), 0)
+  }
 
   const loadWeek = useCallback(async () => {
     setLoaded(false)
@@ -249,38 +249,35 @@ export default function PlanningPage() {
   }
 
   async function markLeaveWeek(empId: string) {
-    const wt = weekType
     for (let day = 1; day <= 5; day++) {
       const ds = toDateStr(addDays(weekStart, day - 1))
       if (holidays.find(h => h.date === ds)) continue
-      if ((stRef[empId]?.[wt]?.[day] ?? 0) === 0) continue
+      if (getDayRef(empId, day) === 0) continue
       await supabase.from('planning_slots').delete().eq('company_id', companyId).eq('employee_id', empId).eq('date', ds)
       await supabase.from('planning_slots').insert({ company_id: companyId, employee_id: empId, date: ds, start_minutes: null, end_minutes: null, break_minutes: 0, slot_type: 'leave_week' })
     }
 
-    // Appliquer les slots de remplacement configurés dans Remplacement & Lissage
-    const { data: replSlots } = await supabase.from('replacement_slots')
-      .select('present_employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation')
-      .eq('company_id', companyId)
-      .eq('absent_employee_id', empId)
-
-    if (replSlots && replSlots.length > 0) {
-      // Grouper par (present_employee_id, day_of_week) pour gérer les multi-créneaux/jour
-      const groups = new Map<string, typeof replSlots>()
-      for (const rs of replSlots) {
-        const key = `${rs.present_employee_id}|${rs.day_of_week}`
-        if (!groups.has(key)) groups.set(key, [])
-        groups.get(key)!.push(rs)
+    // Applique les slots de remplacement de la période active à chaque jour
+    // (pas une requête globale non scopée par période comme avant - audit du
+    // 2026-11-16).
+    for (let day = 1; day <= 5; day++) {
+      const ds = toDateStr(addDays(weekStart, day - 1))
+      if (holidays.find(h => h.date === ds)) continue
+      const dayDate = addDays(weekStart, day - 1)
+      const { replSlots } = slotsForDate(periodSlots, dayDate)
+      const dayRepl = replSlots.filter(rs => rs.absent_employee_id === empId && rs.day_of_week === day)
+      if (dayRepl.length === 0) continue
+      const groups = new Map<string, typeof dayRepl>()
+      for (const rs of dayRepl) {
+        if (!groups.has(rs.present_employee_id)) groups.set(rs.present_employee_id, [])
+        groups.get(rs.present_employee_id)!.push(rs)
       }
-      for (const slots of groups.values()) {
-        const { present_employee_id, day_of_week } = slots[0]
-        const ds = toDateStr(addDays(weekStart, day_of_week - 1))
-        if (holidays.find(h => h.date === ds)) continue
+      for (const [presentEmployeeId, slots] of groups) {
         await supabase.from('planning_slots').delete()
-          .eq('company_id', companyId).eq('employee_id', present_employee_id).eq('date', ds)
+          .eq('company_id', companyId).eq('employee_id', presentEmployeeId).eq('date', ds)
           .in('slot_type', ['work', 'formation'])
         await supabase.from('planning_slots').insert(slots.map(rs => ({
-          company_id: companyId, employee_id: rs.present_employee_id, date: ds,
+          company_id: companyId, employee_id: presentEmployeeId, date: ds,
           start_minutes: rs.start_minutes, end_minutes: rs.end_minutes, break_minutes: rs.break_minutes,
           slot_type: rs.is_formation ? 'formation' : 'work',
         })))
@@ -348,11 +345,10 @@ export default function PlanningPage() {
   const weekType: 'A' | 'B' = getWeekType(weekStart, refMonday)
 
   function isOnLeaveThisWeek(empId: string): boolean {
-    const dayRef = stRef[empId]?.[weekType]
-    if (!dayRef) return false
+    if (employees.length === 0) return false
     let hasWorkingDay = false
     for (let d = 1; d <= 5; d++) {
-      if ((dayRef[d] ?? 0) === 0) continue
+      if (getDayRef(empId, d) === 0) continue
       hasWorkingDay = true
       if (!dayOverrides.some(o => o.employee_id === empId && o.day === d && o.type === 'leave_week')) return false
     }
@@ -360,8 +356,7 @@ export default function PlanningPage() {
   }
 
   function getDeviation(empId: string): { onLeave: true } | { onLeave: false; value: number } | null {
-    const dayRef = stRef[empId]?.[weekType]
-    if (!dayRef) return null
+    if (employees.length === 0) return null
     if (isOnLeaveThisWeek(empId)) return { onLeave: true }
     const absentDays = new Set(dayOverrides.filter(o => o.employee_id === empId).map(o => o.day))
     // Règle RH "Remplacement simple" : dès qu'une collègue est absente cette
@@ -371,13 +366,14 @@ export default function PlanningPage() {
     let reference = 0
     for (let d = 1; d <= 5; d++) {
       if (absentDays.has(d)) continue
+      const dayDate = addDays(weekStart, d - 1)
       // Si cet employé remplace une collègue absente ce jour, utiliser les heures de remplacement comme référence
-      const replHours = replConfig
+      const replHours = slotsForDate(periodSlots, dayDate).replSlots
         .filter(rs => rs.present_employee_id === empId && rs.day_of_week === d)
         .filter(rs => dayOverrides.some(o => o.employee_id === rs.absent_employee_id && o.day === d && o.type === 'leave_week'))
         .reduce((a, rs) => a + Math.max(0, rs.end_minutes - rs.start_minutes - rs.break_minutes), 0)
       if (replHours > 0) reference += replHours
-      else if (!weekHasColleagueAbsence) reference += (dayRef[d] ?? 0)
+      else if (!weekHasColleagueAbsence) reference += getDayRef(empId, d)
     }
     const actual = plannerSlots.filter(s => s.employee_id === empId).reduce((a, s) => a + eff(s), 0)
     return { onLeave: false, value: actual - reference }
@@ -622,7 +618,7 @@ export default function PlanningPage() {
         </div>
 
         {/* Deviations */}
-        {Object.keys(stRef).length > 0 && (
+        {employees.length > 0 && periodSlots.length > 0 && (
           <div className="flex flex-wrap gap-3 mt-3">
             {employees.map((emp, i) => {
               const c = EMP_COLORS[(emp.color_index ?? i) % EMP_COLORS.length]

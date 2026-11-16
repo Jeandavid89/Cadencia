@@ -6,6 +6,8 @@ import { fmtMinutes } from '../types'
 import { getWeekType, defaultRefMonday } from '../lib/weekUtils'
 import { loadPlanningData } from '../lib/planningData'
 import { regenerateNormalSchedule } from '../lib/scheduleGen'
+import { slotsForDate, type PeriodSlots } from '../lib/bilanCalc'
+import { effectiveWeekType } from '../lib/periods'
 
 interface Employee {
   id: string; first_name: string; last_name: string
@@ -61,7 +63,7 @@ export default function CongesPage() {
   const [year, setYear] = useState(new Date().getFullYear())
   const [employees, setEmployees] = useState<Employee[]>([])
   const [leaveSlots, setLeaveSlots] = useState<LeaveSlot[]>([])
-  const [semSlots, setSemSlots] = useState<SemaineTypeSlot[]>([])
+  const [periodSlots, setPeriodSlots] = useState<PeriodSlots[]>([])
   const [holidays, setHolidays] = useState<PublicHoliday[]>([])
   const [sixthWeek, setSixthWeek] = useState(false)
   const [capMap, setCapMap] = useState<Record<string, number>>({})
@@ -82,7 +84,7 @@ export default function CongesPage() {
     ])
     setEmployees((emps ?? []) as Employee[])
     setLeaveSlots((ls ?? []) as LeaveSlot[])
-    setSemSlots(planningData.semSlots)
+    setPeriodSlots(planningData.periodSlots)
     setHolidays((hols ?? []) as PublicHoliday[])
     setSixthWeek((co)?.sixth_week ?? false)
     const refStr = (co)?.reference_week_date as string | null
@@ -107,20 +109,28 @@ export default function CongesPage() {
 
   const holSet = new Set(holidays.map(h => h.date))
 
-  // Heures travail réelles d'un jour selon semaine type (formation exclue)
+  // Heures travail réelles d'un jour selon semaine type (formation exclue),
+  // résolu par la période active à cette date et son mode de cycle A/B vs
+  // semaine unique (effectiveWeekType) - corrige un bug où ce calcul
+  // ignorait complètement les périodes et le mode de cycle (audit du
+  // 2026-11-16).
   function slotMin(empId: string, date: string): number {
     if (holSet.has(date)) return 0
     const d = new Date(date + 'T12:00:00')
     const jsDay = d.getDay()
     if (jsDay < 1 || jsDay > 5) return 0
-    const wt = getWeekType(d, refMonday)
+    const { semSlots, period } = slotsForDate(periodSlots, d)
+    const wt = effectiveWeekType(period, d, refMonday)
     return semSlots.filter(s => s.employee_id === empId && s.week_type === wt && s.day_of_week === jsDay && !s.is_formation).reduce((a, s) => a + stEff(s), 0)
   }
 
-  // Total heures semaine type (formation exclue) pour un employé et un type de semaine
-  function weekTypeTotal(empId: string, weekType: 'A' | 'B'): number {
+  // Total heures semaine type (formation exclue) pour un employé, résolu
+  // par la période active à `date` (pas seulement le type de semaine brut).
+  function weekTypeTotalForDate(empId: string, date: Date): number {
+    const { semSlots, period } = slotsForDate(periodSlots, date)
+    const wt = effectiveWeekType(period, date, refMonday)
     return semSlots
-      .filter(s => s.employee_id === empId && s.week_type === weekType && !s.is_formation)
+      .filter(s => s.employee_id === empId && s.week_type === wt && !s.is_formation)
       .reduce((a, s) => a + stEff(s), 0)
   }
 
@@ -130,8 +140,8 @@ export default function CongesPage() {
   }
 
   // K = proportion du temps réel (hors cotisation 6ème semaine) pour un jour isolé
-  function kCoeff(empId: string, weekType: 'A' | 'B'): number {
-    const total = weekTypeTotal(empId, weekType)
+  function kCoeff(empId: string, date: Date): number {
+    const total = weekTypeTotalForDate(empId, date)
     if (total === 0) return 1
     const cap = weeklyCapitalisation(empId)
     return (total - cap) / total
@@ -158,15 +168,13 @@ export default function CongesPage() {
       const isoWeek = getISOWeek(d)
       if (processedWeeks.has(isoWeek)) continue
       processedWeeks.add(isoWeek)
-      const wt = getWeekType(d, refMonday)
-      leaveMin += Math.round(Math.max(0, weekTypeTotal(emp.id, wt) - cap))
+      leaveMin += Math.round(Math.max(0, weekTypeTotalForDate(emp.id, d) - cap))
     }
 
     // Jours isolés : heures semaine type × K (retire cotisation 6ème semaine)
     for (const s of daySlots) {
       const d = new Date(s.date + 'T12:00:00')
-      const wt = getWeekType(d, refMonday)
-      leaveMin += Math.round(slotMin(emp.id, s.date) * kCoeff(emp.id, wt))
+      leaveMin += Math.round(slotMin(emp.id, s.date) * kCoeff(emp.id, d))
     }
 
     // Congés horaires partiels : durée exacte
@@ -203,16 +211,20 @@ export default function CongesPage() {
       const dates = slots.map(s => s.date).sort()
       const mon = getMondayOf(new Date(dates[0] + 'T12:00:00'))
       const fri = new Date(mon); fri.setDate(mon.getDate() + 4)
+      // Label informatif (parité calendaire réelle) - distinct du calcul,
+      // qui résout toujours la période/le mode de cycle actifs à la date.
       const weekType: 'A' | 'B' = getWeekType(new Date(dates[0] + 'T12:00:00'), refMonday)
-      const totalMin = Math.round(Math.max(0, weekTypeTotal(emp.id, weekType) - cap))
+      const totalMin = Math.round(Math.max(0, weekTypeTotalForDate(emp.id, new Date(dates[0] + 'T12:00:00')) - cap))
       let holidayMin = 0
       for (let offset = 0; offset <= 4; offset++) {
         const day = new Date(mon); day.setDate(mon.getDate() + offset)
         const ds = toStr(day)
         if (!holSet.has(ds)) continue
         const jsDay = day.getDay()
-        holidayMin += semSlots
-          .filter(s => s.employee_id === emp.id && s.week_type === weekType && s.day_of_week === jsDay && !s.is_formation)
+        const { semSlots: daySemSlots, period } = slotsForDate(periodSlots, day)
+        const dayWt = effectiveWeekType(period, day, refMonday)
+        holidayMin += daySemSlots
+          .filter(s => s.employee_id === emp.id && s.week_type === dayWt && s.day_of_week === jsDay && !s.is_formation)
           .reduce((a, s) => a + stEff(s), 0)
       }
       entries.push({
@@ -228,12 +240,12 @@ export default function CongesPage() {
     for (const s of dayList) {
       const d = new Date(s.date + 'T12:00:00')
       const isoWeek = getISOWeek(d)
-      const weekType: 'A' | 'B' = getWeekType(d, refMonday)
+      const weekType: 'A' | 'B' = getWeekType(d, refMonday) // label informatif seulement
       entries.push({
         key: `d-${s.id}`,
         type: 'day', isoWeek, weekType, dates: [s.date],
         label: fmtDayFull(d), dateRange: '',
-        totalMin: Math.round(slotMin(emp.id, s.date) * kCoeff(emp.id, weekType)),
+        totalMin: Math.round(slotMin(emp.id, s.date) * kCoeff(emp.id, d)),
       })
     }
 
