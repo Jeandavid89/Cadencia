@@ -86,6 +86,11 @@ create table planning_periods (
   start_date  date,
   end_date    date,
   created_at  timestamptz not null default now(),
+  -- 'ab' (défaut) : semaine type A/B alternée. 'single' : une seule semaine
+  -- type répétée toutes les semaines - B n'est jamais lu pour le calcul
+  -- (effectiveWeekType), ce qui laisse son contenu éventuel intact et
+  -- réversible sans perte (Prompt 13 bis, migration 008).
+  cycle_mode  text not null default 'ab' check (cycle_mode in ('ab', 'single')),
   constraint planning_periods_base_dates_null
     check (is_base = (start_date is null and end_date is null)),
   constraint planning_periods_dates_order
