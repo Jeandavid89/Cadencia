@@ -8,12 +8,21 @@ export interface PlanningPeriod {
   startDate: string | null  // 'YYYY-MM-DD', null seulement si isBase
   endDate: string | null
   // 'ab' (défaut) : semaine type A/B alternée. 'single' : une seule semaine
-  // type, saisie sous "A" et dupliquée telle quelle vers "B" à la sauvegarde
-  // (SemaineTypePage) - aucun changement nécessaire dans les modèles de
-  // calcul (bilanCalc.ts, CalcAnnuelPage.tsx, etc.), qui continuent de
-  // résoudre A/B normalement et trouvent des valeurs identiques des deux
-  // côtés (Prompt 13).
+  // type (saisie sous "A") répétée toutes les semaines - B n'est jamais lu
+  // ni écrit, son contenu éventuel reste intact et inerte en base (bascule
+  // réversible sans perte, cf. effectiveWeekType - Prompt 13 bis).
   cycleMode: 'ab' | 'single'
+}
+
+/**
+ * Type de semaine (A/B) à utiliser pour résoudre la semaine type à cette
+ * date, compte tenu du mode de cycle de la période active. En mode
+ * 'single', toujours 'A' : B n'est jamais lu pour le calcul, ce qui permet
+ * de laisser son contenu intact en base (réversible sans perte à tout
+ * moment, contrairement à une duplication physique A→B).
+ */
+export function effectiveWeekType(period: PlanningPeriod, date: Date, refMonday: Date): 'A' | 'B' {
+  return period.cycleMode === 'single' ? 'A' : getWeekType(date, refMonday)
 }
 
 /**

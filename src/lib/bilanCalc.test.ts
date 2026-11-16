@@ -305,4 +305,71 @@ describe('computeSimplifiedBilan', () => {
       expect(result.e1.cible).toBeLessThan(resultFull.e1.cible)
     })
   })
+
+  describe('cycle A/B vs semaine unique (Prompt 13 bis)', () => {
+    // Semaine type volontairement très différente entre A (7h/j) et B (3h/j),
+    // pour détecter sans ambiguïté si B est utilisé ou non.
+    function abSlots(employeeId: string): SemaineTypeSlot[] {
+      const slots: SemaineTypeSlot[] = []
+      for (let day = 1; day <= 5; day++) {
+        slots.push({ employee_id: employeeId, week_type: 'A', day_of_week: day, start_minutes: 9 * 60, end_minutes: 16 * 60, break_minutes: 0, is_formation: false }) // 7h/j
+        slots.push({ employee_id: employeeId, week_type: 'B', day_of_week: day, start_minutes: 9 * 60, end_minutes: 12 * 60, break_minutes: 0, is_formation: false }) // 3h/j
+      }
+      return slots
+    }
+
+    it('mode "single" : toutes les semaines utilisent la semaine type A, B est totalement ignoré même avec un contenu différent', () => {
+      const singlePeriod: PlanningPeriod = { ...basePeriod, cycleMode: 'single' }
+      const periodSlots: PeriodSlots[] = [{ period: singlePeriod, semSlots: abSlots('e1'), replSlots: [] }]
+
+      const result = computeSimplifiedBilan({
+        year: 2026, refMonday: getMondayOf(new Date(2026, 0, 5)), employees: [employee], periodSlots,
+        leaveSlots: [], holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+      // 52 semaines × 7h (toujours A, jamais 3h de B) = même résultat que le
+      // premier test ("sans congé ni remplacement") avec une semaine type
+      // pleine 7h/j des deux côtés.
+      expect(result.e1.soldeHeures).toBe(5 * 2100)
+    })
+
+    it('mode "ab" : B garde son contenu propre et alterne normalement (non-régression)', () => {
+      const abPeriod: PlanningPeriod = { ...basePeriod, cycleMode: 'ab' }
+      const periodSlots: PeriodSlots[] = [{ period: abPeriod, semSlots: abSlots('e1'), replSlots: [] }]
+
+      const result = computeSimplifiedBilan({
+        year: 2026, refMonday: getMondayOf(new Date(2026, 0, 5)), employees: [employee], periodSlots,
+        leaveSlots: [], holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+      // ~26 semaines à 7h/j (35h) + ~26 semaines à 3h/j (15h) : nettement
+      // moins que le cas "single" (toujours 35h/sem) ci-dessus.
+      expect(result.e1.soldeHeures).toBeLessThan(5 * 2100)
+    })
+
+    it('basculer le mode ne modifie jamais les données B sous-jacentes (réversibilité, non-régression du bug de duplication destructrice)', () => {
+      const slots = abSlots('e1')
+      const singlePeriod: PlanningPeriod = { ...basePeriod, cycleMode: 'single' }
+      const abPeriodAgain: PlanningPeriod = { ...basePeriod, cycleMode: 'ab' }
+
+      // Même tableau de slots (B inclus, jamais muté) utilisé pour les deux
+      // calculs : passer en "single" puis revenir en "ab" doit retrouver
+      // exactement le même résultat qu'un calcul "ab" n'ayant jamais basculé.
+      const asSingle = computeSimplifiedBilan({
+        year: 2026, refMonday: getMondayOf(new Date(2026, 0, 5)), employees: [employee],
+        periodSlots: [{ period: singlePeriod, semSlots: slots, replSlots: [] }],
+        leaveSlots: [], holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+      const backToAb = computeSimplifiedBilan({
+        year: 2026, refMonday: getMondayOf(new Date(2026, 0, 5)), employees: [employee],
+        periodSlots: [{ period: abPeriodAgain, semSlots: slots, replSlots: [] }],
+        leaveSlots: [], holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+      const neverSwitched = computeSimplifiedBilan({
+        year: 2026, refMonday: getMondayOf(new Date(2026, 0, 5)), employees: [employee],
+        periodSlots: [{ period: basePeriod, semSlots: slots, replSlots: [] }],
+        leaveSlots: [], holSet: new Set(), hasSixthWeek: false, capMap: {}, carryMap: {},
+      })
+      expect(asSingle.e1.soldeHeures).not.toBe(backToAb.e1.soldeHeures) // les deux modes donnent bien des résultats différents...
+      expect(backToAb.e1.soldeHeures).toBe(neverSwitched.e1.soldeHeures) // ...mais revenir en "ab" retrouve exactement l'original
+    })
+  })
 })

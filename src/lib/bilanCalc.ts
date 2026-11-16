@@ -1,5 +1,5 @@
-import { getWeekType, getMondayOf, toDateStr, getYearWeekMondays } from './weekUtils'
-import { resolveActivePeriod, type PlanningPeriod } from './periods'
+import { getMondayOf, toDateStr, getYearWeekMondays } from './weekUtils'
+import { resolveActivePeriod, effectiveWeekType, type PlanningPeriod } from './periods'
 
 export const eff = (s: number, e: number, b: number) => Math.max(0, e - s - b)
 
@@ -55,11 +55,11 @@ export interface SimplifiedBilanRow {
  * d'utiliser des slots différents selon le jour, quand une période commence
  * ou finit un jour autre que lundi.
  */
-export function slotsForDate(periodSlots: PeriodSlots[], date: Date): { semSlots: SemaineTypeSlot[]; replSlots: ReplacementSlot[] } {
+export function slotsForDate(periodSlots: PeriodSlots[], date: Date): { semSlots: SemaineTypeSlot[]; replSlots: ReplacementSlot[]; period: PlanningPeriod } {
   const periods = periodSlots.map(ps => ps.period)
   const active = resolveActivePeriod(periods, date)
   const found = periodSlots.find(ps => ps.period.id === active.id)
-  return found ? { semSlots: found.semSlots, replSlots: found.replSlots } : { semSlots: [], replSlots: [] }
+  return found ? { semSlots: found.semSlots, replSlots: found.replSlots, period: active } : { semSlots: [], replSlots: [], period: active }
 }
 
 /**
@@ -135,8 +135,8 @@ export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<stri
           const day = new Date(weekMon); day.setDate(weekMon.getDate() + offset)
           if (!holSet.has(toDateStr(day))) continue
           const jsDay = day.getDay()
-          const weekType = getWeekType(day, refMonday)
-          const { semSlots } = slotsForDate(periodSlots, day)
+          const { semSlots, period } = slotsForDate(periodSlots, day)
+          const weekType = effectiveWeekType(period, day, refMonday)
           theoryNormal += semSlots
             .filter(s => s.employee_id === emp.id && s.week_type === weekType && s.day_of_week === jsDay && !s.is_formation)
             .reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
@@ -160,8 +160,8 @@ export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<stri
         const day = new Date(weekMon); day.setDate(weekMon.getDate() + offset)
         const ds = toDateStr(day); const jsDay = day.getDay()
         if (leaveDayDates.has(ds)) continue
-        const weekType = getWeekType(day, refMonday)
-        const { semSlots, replSlots } = slotsForDate(periodSlots, day)
+        const { semSlots, replSlots, period } = slotsForDate(periodSlots, day)
+        const weekType = effectiveWeekType(period, day, refMonday)
         const dayRepl = replSlots.filter(r => r.present_employee_id === emp.id && r.day_of_week === jsDay && absentColleagues.some(a => a.id === r.absent_employee_id))
         if (dayRepl.length > 0) {
           for (const r of dayRepl) {
@@ -196,7 +196,7 @@ export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<stri
       const monKey = toDateStr(getMondayOf(d))
       if (processedMondays.has(monKey)) continue
       processedMondays.add(monKey)
-      const wt = getWeekType(d, refMonday)
+      const wt = effectiveWeekType(slotsForDate(periodSlots, d).period, d, refMonday)
       leaveMin += Math.round(Math.max(0, weekTypeTotalForDate(d, wt) - cap))
     }
     for (const ls of empLeaveSlots.filter(s => s.slot_type === 'leave_day')) {
@@ -204,8 +204,8 @@ export function computeSimplifiedBilan(input: SimplifiedBilanInput): Record<stri
       const d = new Date(ls.date + 'T12:00:00')
       const jsDay = d.getDay()
       if (jsDay < 1 || jsDay > 5) continue
-      const wt = getWeekType(d, refMonday)
-      const { semSlots } = slotsForDate(periodSlots, d)
+      const { semSlots, period } = slotsForDate(periodSlots, d)
+      const wt = effectiveWeekType(period, d, refMonday)
       const dayMin = semSlots.filter(s => s.employee_id === emp.id && s.week_type === wt && s.day_of_week === jsDay && !s.is_formation)
         .reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
       const total = weekTypeTotalForDate(d, wt)

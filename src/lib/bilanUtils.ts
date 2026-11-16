@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
-import { getWeekType, defaultRefMonday, getMondayOf, toDateStr } from './weekUtils'
+import { defaultRefMonday, getMondayOf, toDateStr } from './weekUtils'
+import { effectiveWeekType } from './periods'
 import { eff, computeSimplifiedBilan, slotsForDate, type LeaveSlot } from './bilanCalc'
 import { loadPlanningData } from './planningData'
 
@@ -38,7 +39,6 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
 
   // Données semaine courante (weekSolde — équivalent de getDeviation dans PlanningPage)
   const cwMon = getMondayOf(new Date())
-  const cwWeekType = getWeekType(cwMon, ref)
   const cwStart = toDateStr(cwMon)
   const cwFri = (() => { const d = new Date(cwMon); d.setDate(d.getDate() + 4); return toDateStr(d) })()
   const { data: cwSlotsData } = await supabase.from('planning_slots')
@@ -66,12 +66,13 @@ export async function computeSoldeLive(companyId: string): Promise<Record<string
       for (let d = 1; d <= 5; d++) {
         if (absentDays.has(d)) continue
         const dayDate = new Date(cwMon); dayDate.setDate(cwMon.getDate() + (d - 1))
-        const { semSlots: daySemSlots, replSlots: dayReplSlots } = slotsForDate(planningData.periodSlots, dayDate)
+        const { semSlots: daySemSlots, replSlots: dayReplSlots, period: dayPeriod } = slotsForDate(planningData.periodSlots, dayDate)
         const replForDay = dayReplSlots.filter(r => r.present_employee_id === emp.id && r.day_of_week === d && !r.is_formation && absentCols.has(r.absent_employee_id))
         if (replForDay.length > 0) {
           reference += replForDay.reduce((a, r) => a + eff(r.start_minutes, r.end_minutes, r.break_minutes), 0)
         } else if (!weekHasColleagueAbsence) {
-          reference += daySemSlots.filter(s => s.employee_id === emp.id && s.week_type === cwWeekType && s.day_of_week === d && !s.is_formation).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
+          const dayWeekType = effectiveWeekType(dayPeriod, dayDate, ref)
+          reference += daySemSlots.filter(s => s.employee_id === emp.id && s.week_type === dayWeekType && s.day_of_week === d && !s.is_formation).reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
         }
       }
       const actual = cwSlots.filter(s => s.employee_id === emp.id && s.slot_type === 'work' && s.start_minutes != null).reduce((a, s) => a + eff(s.start_minutes!, s.end_minutes ?? s.start_minutes!, s.break_minutes ?? 0), 0)

@@ -102,24 +102,14 @@ export default function PeriodesPage() {
     load()
   }
 
+  // Bascule pure (Prompt 13 bis) : B n'est jamais lu ni écrit en mode
+  // "single" (cf. effectiveWeekType dans les modèles de calcul) - aucune
+  // duplication/écrasement ici, pour que l'aller-retour A/B <-> semaine
+  // unique soit toujours réversible sans perte.
   async function setCycleMode(period: PlanningPeriod, mode: 'ab' | 'single') {
     if (period.cycleMode === mode) return
     const { error } = await supabase.from('planning_periods').update({ cycle_mode: mode }).eq('id', period.id)
     if (error) { alert('Erreur : ' + error.message); return }
-    if (mode === 'single') {
-      // Resynchronise B sur A immédiatement, sans attendre une prochaine
-      // sauvegarde dans Semaine Type - la semaine unique doit être
-      // effective dès le changement de mode.
-      const { data: aSlots } = await supabase.from('semaine_type_slots')
-        .select('employee_id,day_of_week,start_minutes,end_minutes,break_minutes,is_formation')
-        .eq('company_id', companyId).eq('period_id', period.id).eq('week_type', 'A')
-      await supabase.from('semaine_type_slots').delete().eq('company_id', companyId).eq('period_id', period.id).eq('week_type', 'B')
-      if (aSlots && aSlots.length > 0) {
-        await supabase.from('semaine_type_slots').insert(
-          aSlots.map(s => ({ ...s, week_type: 'B', company_id: companyId, period_id: period.id }))
-        )
-      }
-    }
     load()
   }
 

@@ -7,7 +7,7 @@ import WeekPlanner, { EMP_COLORS, eff, type PlannerSlot, type PlannerEmployee } 
 import { getWeekType, defaultRefMonday, toDateStr } from '../lib/weekUtils'
 import { loadPlanningData } from '../lib/planningData'
 import { slotsForDate } from '../lib/bilanCalc'
-import type { PlanningPeriod } from '../lib/periods'
+import { effectiveWeekType, type PlanningPeriod } from '../lib/periods'
 
 function getISOWeek(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -174,14 +174,6 @@ export default function SemaineTypePage() {
     if (wt === 'A') setSlotsA(slots)
     else setSlotsB(slots)
     scheduleSave(wt, slots)
-    // Mode "1 semaine" (Prompt 13) : B est dupliqué sur A à chaque
-    // sauvegarde, pour que les modèles de calcul (qui résolvent toujours
-    // A/B normalement) trouvent des valeurs identiques des deux côtés.
-    if (wt === 'A' && isSingleCycle) {
-      const cloneB = slots.map((s, i) => ({ ...s, id: `single_b_${i}_${Date.now()}` }))
-      setSlotsB(cloneB)
-      scheduleSave('B', cloneB)
-    }
     setProjDone(false)
   }
 
@@ -193,11 +185,7 @@ export default function SemaineTypePage() {
     // Nouveaux ids locaux : ce ne sont que des clés React, jamais envoyées en
     // base (scheduleSave reconstruit chaque ligne sans l'id côté insert).
     const cloneA = baseSlotsA.map((s, i) => ({ ...s, id: `copy_a_${i}_${Date.now()}` }))
-    // Mode "1 semaine" : B reste calqué sur A même si le planning de base
-    // copié est lui en cycle A/B.
-    const cloneB = isSingleCycle
-      ? cloneA.map((s, i) => ({ ...s, id: `copy_b_${i}_${Date.now()}` }))
-      : baseSlotsB.map((s, i) => ({ ...s, id: `copy_b_${i}_${Date.now()}` }))
+    const cloneB = baseSlotsB.map((s, i) => ({ ...s, id: `copy_b_${i}_${Date.now()}` }))
     setSlotsA(cloneA)
     setSlotsB(cloneB)
     scheduleSave('A', cloneA)
@@ -206,18 +194,15 @@ export default function SemaineTypePage() {
     setProjDone(false)
   }
 
+  // Bascule pure (Prompt 13 bis) : B n'est jamais lu ni écrit en mode
+  // "single" (cf. effectiveWeekType dans les modèles de calcul) - aucune
+  // duplication/écrasement ici, pour que l'aller-retour A/B <-> semaine
+  // unique soit toujours réversible sans perte.
   async function setCycleMode(mode: 'ab' | 'single') {
     if (!periodId || !currentPeriod || currentPeriod.cycleMode === mode) return
     const { error } = await supabase.from('planning_periods').update({ cycle_mode: mode }).eq('id', periodId)
     if (error) { alert('Erreur : ' + error.message); return }
     setPeriods(prev => prev.map(p => p.id === periodId ? { ...p, cycleMode: mode } : p))
-    if (mode === 'single') {
-      // Resynchronise B sur A immédiatement (cf. duplication faite à chaque
-      // sauvegarde dans handleChange une fois le mode actif).
-      const cloneB = slotsA.map((s, i) => ({ ...s, id: `single_b_${i}_${Date.now()}` }))
-      setSlotsB(cloneB)
-      scheduleSave('B', cloneB)
-    }
   }
 
   function resetToEmpty() {
@@ -305,8 +290,8 @@ export default function SemaineTypePage() {
         const jsDay = day.getDay()
         if (jsDay < 1 || jsDay > 5) continue
         const ds = toDateStr(day)
-        const wt: 'A' | 'B' = getWeekType(day, refMonday)
-        const { semSlots: daySemSlots, replSlots: dayReplSlots } = slotsForDate(planningData.periodSlots, day)
+        const { semSlots: daySemSlots, replSlots: dayReplSlots, period: dayPeriod } = slotsForDate(planningData.periodSlots, day)
+        const wt: 'A' | 'B' = effectiveWeekType(dayPeriod, day, refMonday)
         if (holSet.has(ds)) {
           for (const emp of emps) {
             if (!leaveSet.has(`${emp.id}|${ds}`)) {

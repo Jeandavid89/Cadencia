@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { fmtMinutes } from '../types'
 import { getWeekType, defaultRefMonday, toDateStr, getMondayOf, getYearWeekMondays } from '../lib/weekUtils'
+import { effectiveWeekType } from '../lib/periods'
 import { computeSoldeLive } from '../lib/bilanUtils'
 import { slotsForDate, isWeekInEmployment } from '../lib/bilanCalc'
 import { loadPlanningData } from '../lib/planningData'
@@ -219,7 +220,12 @@ export default function CalcAnnuelPage() {
       for (const weekMon of weekMondays) {
         if (!isWeekInEmployment(weekMon, emp.entry_date, emp.exit_date)) continue // hors contrat : aucune contribution
         const monKey = toDateStr(weekMon)
-        const weekType = getWeekType(weekMon, refMonday)
+        // Parité calendaire de la semaine (A/B ISO), pour le classement des
+        // colonnes explicatives "H. Sem A/B" - indépendante du mode de
+        // cycle : une semaine civile paire reste "B" même en mode "semaine
+        // unique", seule la résolution des créneaux (effectiveWeekType,
+        // par jour ci-dessous) est affectée par le mode.
+        const calendarWeekType = getWeekType(weekMon, refMonday)
         const isLeaveWeek = absentWeekMondays.has(monKey)
 
         // Collègues absents cette semaine (nécessaire même pour semaines de congé)
@@ -247,7 +253,8 @@ export default function CalcAnnuelPage() {
 
           // Semaine type/remplacement résolus pour CE jour précis : permet à
           // une période datée de ne couvrir qu'une partie d'une semaine civile.
-          const { semSlots: daySemSlots, replSlots: dayReplSlots } = slotsForDate(planningData.periodSlots, day)
+          const { semSlots: daySemSlots, replSlots: dayReplSlots, period: dayPeriod } = slotsForDate(planningData.periodSlots, day)
+          const weekType = effectiveWeekType(dayPeriod, day, refMonday)
 
           // Remplacement ce jour précis ? (vérifié avant le filtre férié)
           const dayReplMatches = dayReplSlots.filter(r =>
@@ -300,7 +307,7 @@ export default function CalcAnnuelPage() {
           } else {
             normalWeeksCount++
             normalSimMin += weekNormalMin
-            if (weekType === 'A') { normalWeeksCountA++; normalSimMinA += weekNormalMin }
+            if (calendarWeekType === 'A') { normalWeeksCountA++; normalSimMinA += weekNormalMin }
             else                  { normalWeeksCountB++; normalSimMinB += weekNormalMin }
           }
         }
@@ -333,7 +340,7 @@ export default function CalcAnnuelPage() {
         const monKey = toDateStr(getMondayOf(d))
         if (processedMondays.has(monKey)) continue
         processedMondays.add(monKey)
-        const wt = getWeekType(d, refMonday)
+        const wt = effectiveWeekType(slotsForDate(planningData.periodSlots, d).period, d, refMonday)
         leaveMin += Math.round(Math.max(0, weekTypeTotalForDate(d, wt) - cap))
       }
       for (const ls of empLeaveSlots.filter(s => s.slot_type === 'leave_day')) {
@@ -341,7 +348,7 @@ export default function CalcAnnuelPage() {
         const d = new Date(ls.date + 'T12:00:00')
         const jsDay = d.getDay()
         if (jsDay < 1 || jsDay > 5) continue
-        const wt = getWeekType(d, refMonday)
+        const wt = effectiveWeekType(slotsForDate(planningData.periodSlots, d).period, d, refMonday)
         const dayMin = slotsForDate(planningData.periodSlots, d).semSlots
           .filter(s => s.employee_id === emp.id && s.week_type === wt && s.day_of_week === jsDay && !s.is_formation)
           .reduce((a, s) => a + eff(s.start_minutes, s.end_minutes, s.break_minutes), 0)
