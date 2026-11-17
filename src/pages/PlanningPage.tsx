@@ -315,6 +315,35 @@ export default function PlanningPage() {
     loadWeek()
   }
 
+  // Retire un congé semaine complet (les 5 jours de la semaine affichée),
+  // y compris le remplacement applique aux collegues presentes - meme
+  // logique que CongesPage::deleteEntry, pour eviter de devoir retirer
+  // l'absence jour par jour quand le conge a ete pose via "Congé toute la
+  // semaine" (retour utilisateur du 17/11).
+  async function removeLeaveWeek(empId: string) {
+    const weekDates = [0, 1, 2, 3, 4].map(o => toDateStr(addDays(weekStart, o)))
+    await supabase.from('planning_slots').delete()
+      .eq('company_id', companyId).eq('employee_id', empId)
+      .in('date', weekDates).eq('slot_type', 'leave_week')
+
+    const toRegenerate: { employeeId: string; date: string }[] = weekDates.map(date => ({ employeeId: empId, date }))
+    for (let day = 1; day <= 5; day++) {
+      const dayDate = addDays(weekStart, day - 1)
+      const ds = toDateStr(dayDate)
+      const { replSlots } = slotsForDate(periodSlots, dayDate)
+      const presentIds = new Set(replSlots.filter(rs => rs.absent_employee_id === empId && rs.day_of_week === day).map(rs => rs.present_employee_id))
+      for (const presentEmpId of presentIds) {
+        await supabase.from('planning_slots').delete()
+          .eq('company_id', companyId).eq('employee_id', presentEmpId).eq('date', ds)
+          .in('slot_type', ['work', 'formation'])
+        toRegenerate.push({ employeeId: presentEmpId, date: ds })
+      }
+    }
+    await regenerateNormalSchedule(companyId, toRegenerate)
+    setContextMenu(null)
+    loadWeek()
+  }
+
   function handleGridRightClick(empId: string, day: number, minuteAt: number, x: number, y: number) {
     setContextMenu(null)
     setLeavePartialForm({ empId, day, startMin: minuteAt, endMin: Math.min(minuteAt + 120, 1200), x, y })
@@ -680,7 +709,7 @@ export default function PlanningPage() {
         {/* Main planner */}
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <div className="px-6 py-3 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
-            <p className="text-xs text-slate-400">Cliquez sur <span className="font-mono text-slate-500">⋯</span> au-dessus d'une colonne pour poser congé</p>
+            <p className="text-xs text-slate-400">Cliquez sur <span className="font-mono text-slate-500">⋯</span> au-dessus d'une colonne pour poser <b>ou retirer</b> un congé</p>
             <p className="text-xs text-slate-400 italic">Cliquer pour ajouter · Glisser · Étirer les bords</p>
           </div>
           {/* Barre de contexte alignée avec WeekPlanner */}
@@ -731,6 +760,13 @@ export default function PlanningPage() {
         const emp = employees.find(e => e.id === leavePartialForm.empId)
         const dayName = DAYS_FR_LONG[leavePartialForm.day]
         const dur = Math.max(0, leavePartialForm.endMin - leavePartialForm.startMin)
+        // Congé entier (jour ou semaine) deja pose ce jour-la pour cette
+        // employee : on ne peut pas poser un conge horaire par-dessus (cf.
+        // saveLeavePartial), donc on propose directement de le supprimer au
+        // lieu d'afficher un formulaire de creation voue a echouer (retour
+        // utilisateur du 17/11 - "ajouter supprimer le conge" dans cet onglet).
+        const existingFullDay = dayOverrides.find(o => o.employee_id === leavePartialForm.empId && o.day === leavePartialForm.day && (o.type === 'leave_day' || o.type === 'leave_week'))
+        const existingPartials = leavePartialSlots.filter(lp => lp.employee_id === leavePartialForm.empId && lp.day === leavePartialForm.day)
         return (
           <div className="fixed z-[200] bg-white border border-blue-200 rounded-2xl shadow-2xl p-4 w-60"
             style={{ left: Math.min(leavePartialForm.x, window.innerWidth - 256), top: Math.min(leavePartialForm.y, window.innerHeight - 220) }}
@@ -742,32 +778,66 @@ export default function PlanningPage() {
               </div>
               <button onClick={() => setLeavePartialForm(null)} className="text-slate-400 hover:text-slate-600 text-lg leading-none">×</button>
             </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400 w-8">Début</span>
-                <input type="time" value={m2t(leavePartialForm.startMin)}
-                  onChange={e => setLeavePartialForm(f => f ? { ...f, startMin: t2m(e.target.value) } : null)}
-                  className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white" />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400 w-8">Fin</span>
-                <input type="time" value={m2t(leavePartialForm.endMin)}
-                  onChange={e => setLeavePartialForm(f => f ? { ...f, endMin: t2m(e.target.value) } : null)}
-                  className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white" />
-              </div>
-              {dur > 0 && <p className="text-[10px] text-blue-400 text-center font-medium">{fmtMinutes(dur)} de congé</p>}
-            </div>
-            <div className="flex gap-2 mt-3">
-              <button onClick={() => setLeavePartialForm(null)}
-                className="flex-1 px-3 py-1.5 text-xs text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
-                Annuler
-              </button>
-              <button onClick={saveLeavePartial}
-                disabled={leavePartialForm.endMin <= leavePartialForm.startMin}
-                className="flex-1 px-3 py-1.5 text-xs font-semibold text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                Enregistrer
-              </button>
-            </div>
+
+            {existingFullDay ? (
+              <>
+                <p className="text-xs text-slate-500 mb-3">
+                  {existingFullDay.type === 'leave_week' ? 'Congé semaine déjà posé ce jour-là.' : 'Congé entier déjà posé ce jour-là.'}
+                </p>
+                <button
+                  onClick={() => {
+                    if (existingFullDay.type === 'leave_week') removeLeaveWeek(leavePartialForm.empId)
+                    else removeOverride(leavePartialForm.empId, leavePartialForm.day)
+                    setLeavePartialForm(null)
+                  }}
+                  className="w-full px-3 py-1.5 text-xs font-semibold text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors">
+                  Supprimer le congé
+                </button>
+              </>
+            ) : (
+              <>
+                {existingPartials.length > 0 && (
+                  <div className="mb-3 space-y-1.5">
+                    <p className="text-[10px] text-slate-400 uppercase tracking-wide font-semibold">Congé(s) horaire(s) déjà posé(s)</p>
+                    {existingPartials.map(lp => (
+                      <div key={lp.id} className="flex items-center justify-between gap-2 bg-blue-50 rounded-lg px-2 py-1">
+                        <span className="text-xs text-blue-700">{m2t(lp.start_min)}–{m2t(lp.end_min)}</span>
+                        <button onClick={() => { deleteLeavePartial(lp.id); setLeavePartialForm(null) }}
+                          className="text-xs font-semibold text-red-500 hover:text-red-700">
+                          Supprimer
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-400 w-8">Début</span>
+                    <input type="time" value={m2t(leavePartialForm.startMin)}
+                      onChange={e => setLeavePartialForm(f => f ? { ...f, startMin: t2m(e.target.value) } : null)}
+                      className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-400 w-8">Fin</span>
+                    <input type="time" value={m2t(leavePartialForm.endMin)}
+                      onChange={e => setLeavePartialForm(f => f ? { ...f, endMin: t2m(e.target.value) } : null)}
+                      className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white" />
+                  </div>
+                  {dur > 0 && <p className="text-[10px] text-blue-400 text-center font-medium">{fmtMinutes(dur)} de congé</p>}
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => setLeavePartialForm(null)}
+                    className="flex-1 px-3 py-1.5 text-xs text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+                    Annuler
+                  </button>
+                  <button onClick={saveLeavePartial}
+                    disabled={leavePartialForm.endMin <= leavePartialForm.startMin}
+                    className="flex-1 px-3 py-1.5 text-xs font-semibold text-white bg-blue-500 rounded-lg hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                    Enregistrer
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )
       })()}
@@ -825,10 +895,18 @@ export default function PlanningPage() {
                   📅 Congé toute la semaine
                 </button>
                 {cmOverride && (
-                  <button onClick={() => removeOverride(contextMenu.empId, contextMenu.day)}
-                    className="w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-50 hover:text-red-600 border-t border-slate-100">
-                    ✕ Retirer l'absence
-                  </button>
+                  <>
+                    {cmOverride.type === 'leave_week' && (
+                      <button onClick={() => removeLeaveWeek(contextMenu.empId)}
+                        className="w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-50 hover:text-red-600 border-t border-slate-100">
+                        ✕ Retirer le congé (toute la semaine)
+                      </button>
+                    )}
+                    <button onClick={() => removeOverride(contextMenu.empId, contextMenu.day)}
+                      className={`w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-50 hover:text-red-600 ${cmOverride.type === 'leave_week' ? '' : 'border-t border-slate-100'}`}>
+                      ✕ Retirer l'absence ({DAYS_FR[contextMenu.day]} uniquement)
+                    </button>
+                  </>
                 )}
                 <button onClick={() => setContextMenu(null)}
                   className="w-full text-left px-4 py-2 text-xs text-slate-400 hover:bg-slate-50 border-t border-slate-100">
