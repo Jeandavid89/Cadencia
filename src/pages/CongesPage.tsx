@@ -8,6 +8,7 @@ import { loadPlanningData } from '../lib/planningData'
 import { regenerateNormalSchedule } from '../lib/scheduleGen'
 import { slotsForDate, type PeriodSlots } from '../lib/bilanCalc'
 import { effectiveWeekType } from '../lib/periods'
+import { useRefetchOnFocus } from '../lib/useRefetchOnFocus'
 
 interface Employee {
   id: string; first_name: string; last_name: string
@@ -100,6 +101,7 @@ export default function CongesPage() {
   }, [companyId, year])
 
   useEffect(() => { if (companyId) load() }, [companyId, load])
+  useRefetchOnFocus(load)
 
   if (!loaded) return (
     <div className="flex items-center justify-center h-full">

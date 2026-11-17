@@ -10,6 +10,7 @@ import { computeSimplifiedBilan, slotsForDate, type PeriodSlots } from '../lib/b
 import { effectiveWeekType } from '../lib/periods'
 import { loadPlanningData } from '../lib/planningData'
 import { regenerateNormalSchedule } from '../lib/scheduleGen'
+import { useRefetchOnFocus } from '../lib/useRefetchOnFocus'
 
 // ─── helpers ISO week ───
 function getISOWeek(date: Date): number {
@@ -82,26 +83,27 @@ export default function PlanningPage() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Load employees + targets once
+  const init = useCallback(async () => {
+    const year = new Date().getFullYear()
+    const [{ data: emps }, { data: tgts }, { data: hols }, planningData, { data: co }] = await Promise.all([
+      supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,color_index').eq('company_id', companyId).eq('active', true).order('sort_order'),
+      supabase.from('week_targets').select('employee_id,sem_a_minutes,sem_b_minutes').eq('company_id', companyId).eq('year', year),
+      supabase.from('public_holidays').select('date,name').eq('company_id', companyId).eq('year', year),
+      loadPlanningData(companyId),
+      supabase.from('companies').select('reference_week_date').eq('id', companyId).single(),
+    ])
+    const refStr = (co)?.reference_week_date as string | null
+    setRefMonday(refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year))
+    if (tgts) setTargets(tgts)
+    if (hols) setHolidays(hols)
+    setPeriodSlots(planningData.periodSlots)
+    if (emps) setEmployees(emps)
+  }, [companyId])
+
   useEffect(() => {
     if (!companyId) return
-    async function init() {
-      const year = new Date().getFullYear()
-      const [{ data: emps }, { data: tgts }, { data: hols }, planningData, { data: co }] = await Promise.all([
-        supabase.from('employees').select('id,first_name,last_name,contract_minutes_per_week,color_index').eq('company_id', companyId).eq('active', true).order('sort_order'),
-        supabase.from('week_targets').select('employee_id,sem_a_minutes,sem_b_minutes').eq('company_id', companyId).eq('year', year),
-        supabase.from('public_holidays').select('date,name').eq('company_id', companyId).eq('year', year),
-        loadPlanningData(companyId),
-        supabase.from('companies').select('reference_week_date').eq('id', companyId).single(),
-      ])
-      const refStr = (co)?.reference_week_date as string | null
-      setRefMonday(refStr ? new Date(refStr + 'T00:00:00') : defaultRefMonday(year))
-      if (tgts) setTargets(tgts)
-      if (hols) setHolidays(hols)
-      setPeriodSlots(planningData.periodSlots)
-      if (emps) setEmployees(emps)
-    }
     init()
-  }, [companyId])
+  }, [companyId, init])
 
   // Heures théoriques (semaine type, formation exclue) d'un employé pour un
   // jour de la semaine actuellement affichée, résolues par la période active
@@ -128,6 +130,10 @@ export default function PlanningPage() {
     setDbSlots((data as DBPlanningSlot[]) ?? [])
     setLoaded(true)
   }, [companyId, weekStart])
+
+  // Ne recharge pas s'il reste une sauvegarde en attente (debounce de
+  // scheduleSave) pour ne pas ecraser une modification pas encore envoyee.
+  useRefetchOnFocus(() => { if (!saving) { init(); loadWeek() } })
 
   // Load week slots when weekStart changes
   useEffect(() => {

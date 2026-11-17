@@ -8,6 +8,7 @@ import { getWeekType, defaultRefMonday, toDateStr } from '../lib/weekUtils'
 import { loadPlanningData } from '../lib/planningData'
 import { slotsForDate } from '../lib/bilanCalc'
 import { effectiveWeekType, type PlanningPeriod } from '../lib/periods'
+import { useRefetchOnFocus } from '../lib/useRefetchOnFocus'
 
 function getISOWeek(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -139,6 +140,9 @@ export default function SemaineTypePage() {
   }, [companyId, requestedPeriodId])
 
   useEffect(() => { if (companyId) load() }, [companyId, load])
+  // Ne recharge pas s'il reste une sauvegarde en attente (debounce de
+  // scheduleSave) pour ne pas ecraser une modification pas encore envoyee.
+  useRefetchOnFocus(() => { if (!saving) load() })
 
   const scheduleSave = useCallback((weekType: 'A' | 'B', slots: PlannerSlot[]) => {
     if (!periodId) return // chargement pas encore terminé

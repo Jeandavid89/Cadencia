@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { getMondayOf, toDateStr, getWeekType, countYearWeeks, defaultRefMonday } from '../lib/weekUtils'
+import { useRefetchOnFocus } from '../lib/useRefetchOnFocus'
 
 interface YearRow {
   year: number
@@ -48,6 +49,7 @@ export default function RhRulesPage() {
   }, [companyId, currentYear])
 
   useEffect(() => { if (companyId) load() }, [companyId, load])
+  useRefetchOnFocus(load)
 
   useEffect(() => {
     if (!refDate) return

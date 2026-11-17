@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
 import { findOverlappingPeriod, type PlanningPeriod } from '../lib/periods'
+import { useRefetchOnFocus } from '../lib/useRefetchOnFocus'
 
 const PERIOD_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#0ea5e9']
 const MONTHS_FR = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc']
@@ -65,6 +66,7 @@ export default function PeriodesPage() {
   }, [companyId, year])
 
   useEffect(() => { if (companyId) load() }, [companyId, year, load])
+  useRefetchOnFocus(load)
 
   const yearPeriods = periods.filter(p => !p.isBase && p.startDate?.startsWith(String(year)))
   const basePeriod = periods.find(p => p.isBase)

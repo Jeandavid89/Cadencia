@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../stores/authStore'
@@ -7,6 +7,7 @@ import WeekPlanner, { EMP_COLORS, type PlannerSlot, type PlannerEmployee } from 
 import { countYearWeeks, defaultRefMonday, getYearWeekMondays } from '../lib/weekUtils'
 import { countPeriodWeeks, type PlanningPeriod } from '../lib/periods'
 import { loadPlanningData } from '../lib/planningData'
+import { useRefetchOnFocus } from '../lib/useRefetchOnFocus'
 
 interface Employee {
   id: string; first_name: string; last_name: string
@@ -63,9 +64,7 @@ export default function ReplacementPage() {
   const _uid = useRef(0)
   const resultsRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!companyId) return
-    async function load() {
+  const load = useCallback(async () => {
       const [{ data: co }, { data: emps }, planningData] = await Promise.all([
         supabase.from('companies').select('sixth_week,reference_week_date').eq('id', companyId).single(),
         supabase.from('employees')
@@ -136,9 +135,13 @@ export default function ReplacementPage() {
         } catch { /* données corrompues, on ignore */ }
       }
       setLoaded(true)
-    }
-    load()
   }, [companyId, requestedPeriodId])
+
+  useEffect(() => { if (companyId) load() }, [companyId, load])
+  // Ne recharge pas s'il reste une sauvegarde de remplacement en attente
+  // (debounce de handleSlotsChange) pour ne pas ecraser une modification
+  // pas encore envoyee.
+  useRefetchOnFocus(() => { if (!saving) load() })
 
   async function syncCapToDb() {
     if (!periodId) return

@@ -8,6 +8,7 @@ import { effectiveWeekType } from '../lib/periods'
 import { computeSoldeLive } from '../lib/bilanUtils'
 import { slotsForDate, isWeekInEmployment } from '../lib/bilanCalc'
 import { loadPlanningData } from '../lib/planningData'
+import { useRefetchOnFocus } from '../lib/useRefetchOnFocus'
 
 interface Employee {
   id: string; first_name: string; last_name: string
@@ -383,6 +384,7 @@ export default function CalcAnnuelPage() {
   }, [companyId, year])
 
   useEffect(() => { if (companyId) load() }, [companyId, year, load])
+  useRefetchOnFocus(load)
 
   if (!loaded) return <div className="flex items-center justify-center h-full"><div className="w-6 h-6 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin" /></div>
 
